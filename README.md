@@ -5,8 +5,6 @@
 現在は設計資料のみです。アプリ、Docker環境、DB、AI解析はまだ実装・接続していません。
 
 - [初版の設計](docs/design.md)
-- [Codex向け開発指示](docs/codex-brief.md)
-- [GitHub設定](docs/github-settings.md)
 
 ## 初版の利用方法
 
@@ -24,14 +22,9 @@ Python・FastAPI・Jinja2・PostgreSQLを採用し、SQLAlchemyでDBにアクセ
 
 Pythonの入力検証からSQL、保存、画面表示まで説明し、主キー・外部キー・多対多の関連、トランザクション、HTTPとAPIを学べる構成にします。pgvectorによる意味検索は後続の学習段階で検討します。
 
-## 開発を始める
+## 開発状況
 
-```sh
-git clone https://github.com/atsushi-ambo/project-meme.git
-cd project-meme
-```
-
-非公開リポジトリなのでGitHub認証が必要です。Codexでこのフォルダを開き、`docs/codex-brief.md`を参照してください。起動方法は実装・検証後に追記します。
+MacBookの開発環境とGitHubリポジトリはセットアップ済みです。[設計書](docs/design.md)に沿って実装を進めます。アプリの起動方法は実装・検証後に追記します。
 
 ## 保存と利用範囲
 
