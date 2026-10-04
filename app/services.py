@@ -6,7 +6,7 @@ from .models import Cat, Observation, Health, Tag, ObservationTag, DictionaryIte
 
 KINDS = {'observation': Observation, 'health': Health}
 LABELS = {'vomit':'吐いた','food':'食事','water':'水','toilet':'トイレ','weight':'体重','energy':'元気','other':'その他'}
-ASSESSMENTS = {'supports':'支持する例','contradicts':'合わない例','unknown':'未判断'}
+ASSESSMENTS = {'unknown':'まだ分からない','supports':'合っていそう','contradicts':'合わなそう'}
 CONDITIONS = {'usual':'いつも通り','less':'少なめ','none':'なし','very_low':'かなり低い','more':'多め'}
 
 def parent(db, kind, id, lock=False):
@@ -63,14 +63,22 @@ def save_dictionary(db, data, id=None):
 
 def save_interaction(db, observation_id, data, id=None):
     observation = parent(db, 'observation', observation_id, True)
-    if data.cue_item_id:
-        cue = db.get(DictionaryItem, data.cue_item_id, with_for_update=True)
-        if not cue or cue.cat_id != observation.cat_id or cue.kind != 'cue':
-            raise HTTPException(422, 'この合図は関連づけられません。')
     row = db.get(Interaction, id) if id else Interaction(observation_id=observation_id)
     if not row or row.observation_id != observation_id:
         raise HTTPException(404)
-    for key, value in data.model_dump().items():
+    from .schemas import InteractionInput
+    # 新規作成では省略された既定値も使う。更新時だけ既存の値を引き継ぐ。
+    values = data.model_dump()
+    if id:
+        values = {name: getattr(row, name) for name in InteractionInput.model_fields}
+        values.update(data.model_dump(exclude_unset=True))
+        # 省略された日時も合わせて再検証し、DB制約違反の前に入力エラーを返す。
+        values = InteractionInput.model_validate(values).model_dump()
+    if values['cue_item_id']:
+        cue = db.get(DictionaryItem, values['cue_item_id'], with_for_update=True)
+        if not cue or cue.cat_id != observation.cat_id or cue.kind != 'cue':
+            raise HTTPException(422, 'この合図は関連づけられません。')
+    for key, value in values.items():
         setattr(row, key, value)
     db.add(row)
 
@@ -78,7 +86,7 @@ def save_evidence(db, observation_id, data):
     observation = parent(db, 'observation', observation_id, True)
     item = db.get(DictionaryItem, data.dictionary_item_id, with_for_update=True)
     if not item or item.kind != 'hypothesis' or item.cat_id != observation.cat_id:
-        raise HTTPException(422, 'この仮説は関連づけられません。')
+        raise HTTPException(422, 'この予想は関連づけられません。')
     row = db.get(Evidence, (item.id, observation.id)) or Evidence(dictionary_item_id=item.id, observation_id=observation.id)
     row.assessment, row.rationale = data.assessment, data.rationale
     db.add(row)

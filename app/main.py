@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSON
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import select, func, delete, text
+from sqlalchemy import select, func, delete, text, or_
 from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.background import BackgroundTask
 from .config import settings
@@ -117,8 +117,11 @@ def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30):
         raise HTTPException(422, '日付・ページ・タグを確認してください。')
     if len(q) > 200: raise HTTPException(422, '検索語が長すぎます。')
     if q:
-        column = model.description if model is Observation else model.details
-        query = query.where(column.contains(q, autoescape=True))
+        if model is Observation:
+            query = query.where(or_(model.description.contains(q, autoescape=True),
+                model.id.in_(select(Comment.observation_id).where(Comment.body.contains(q, autoescape=True)))))
+        else:
+            query = query.where(model.details.contains(q, autoescape=True))
     return list(db.scalars(query.order_by(model.occurred_at.desc(), model.id.desc()).offset((page-1)*limit).limit(limit)))
 
 @app.get('/observations')
@@ -263,7 +266,7 @@ async def observation_action(request:Request,id:int,action:str):
 async def dictionary_save(request:Request,id:int|None=None):
     raw=await read_form(request)
     try: data=DictionaryInput.model_validate(raw)
-    except ValidationError: raise HTTPException(422,'辞書の種類・タイトル・内容を確認してください。')
+    except ValidationError: raise HTTPException(422,'予想か合図の種類、タイトル、内容を確認してください。')
     def process():
         with transaction() as db: item=save_dictionary(db,data,id)
         return RedirectResponse(f'/dictionary/{item.id}',303)
