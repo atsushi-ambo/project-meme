@@ -9,3 +9,10 @@ data/
 *.sqlite3
 *.db
 .DS_Store
+
+# Local exports, backups and test artifacts
+backups/
+exports/
+.pytest_cache/
+.coverage
+htmlcov/

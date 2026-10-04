@@ -4,7 +4,7 @@
 
 メメの声と行動を観察し、一つずつ意味や合図を確かめ、意思疎通の手がかりを育てる。『プロジェクト・ヘイル・メアリー』の、異なる相手との観察と試行による意思疎通が着想。名称はプロジェクト・アプリともに「プロジェクト・メメ」、リポジトリは`project-meme`とする。
 
-メメ1匹、飼い主1アカウントから始める。観察記録、メメ辞書、体調管理、保存管理は一つのアプリの機能として実装する。将来、独立したアプリが必要になった段階で分割を検討する。
+メメ1匹、単一の飼い主のローカル利用から始める。初版にはログイン画面を設けず、同じMacBookへアクセスできる人を区別しない。アカウントはLAN利用前に導入する。観察記録、メメ辞書、体調管理、保存管理は一つのアプリの機能として実装する。将来、独立したアプリが必要になった段階で分割を検討する。
 
 Python、HTTPとAPI、SQL、RDB設計、Dockerを学ぶことも目的とする。猫語の翻訳、診断、自動学習、未検証の確率、意図の確定は約束しない。
 
@@ -66,17 +66,17 @@ HTTPルート、入力モデル、保存処理、添付処理、期限・CSV処�
 | テーブル | 主な項目 | 分ける理由 |
 |---|---|---|
 | cats | id, name, birthday?, notes | 名前やプロフィールを記録ごとに重複させない |
-| observations | id, cat_id, occurred_at, timezone, location?, description, submission_key | 日時・状況・観察事実の中心。仮説と事実を分ける |
+| observations | id, cat_id, occurred_at, timezone, location?, description, submission_key, deletion_requested_at? | 日時・状況・観察事実の中心。仮説と事実を分ける |
 | situation_tags | id, name（重複不可） | タグ名を統一し、表記ゆれを防ぐ |
 | observation_tags | observation_id, tag_id | 一つの観察に複数タグ、一つのタグに複数観察を関連づける |
 | observation_comments | id, observation_id, body | 後からの追記を複数残し、元の観察との違いを示す |
-| interactions | id, observation_id, acted_at, owner_action, cat_response?, responded_at? | 一つの場面で複数回の働きかけがあり、反応は後から記録できる |
+| interactions | id, observation_id, acted_at?, owner_action, cue_item_id?, cat_response?, responded_at? | 一つの場面で複数回の働きかけがあり、反応は後から記録できる |
 | dictionary_items | id, cat_id, kind, title, hypothesis?, cue?, notes | 継続して検討する仮説・合図を、個々の出来事から分ける |
 | dictionary_evidence | dictionary_item_id, observation_id, assessment, rationale? | 仮説と観察の多対多。支持・不一致・未判断は観察ごとに異なる |
-| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, submission_key | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
-| media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type, bytes, captured_at?, captured_at_source, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count | 複数添付と、本文とは独立した容量・期限・削除を管理する |
+| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, submission_key, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
+| media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type?, bytes?, reserved_bytes, upload_key, captured_at?, captured_at_source, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count, next_retry_at?, last_error_code? | 複数添付と、本文とは独立した容量・期限・削除を管理する |
 
-`?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにする。IDは認可の代用にしない。
+`?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにし、評価の変更を追えるようdictionary_evidenceにもcreated_at・updated_atを持たせる。初版は完全な編集履歴を保存せず、重要な新しい解釈は元の仮説を上書きせず別項目として登録する。IDは認可の代用にしない。
 
 ### 関連
 
@@ -87,6 +87,7 @@ erDiagram
     cats ||--o{ dictionary_items : has
     observations ||--o{ observation_comments : has
     observations ||--o{ interactions : has
+    dictionary_items o|--o{ interactions : cue_used
     observations ||--o{ observation_tags : has
     situation_tags ||--o{ observation_tags : classifies
     observations ||--o{ dictionary_evidence : supports
@@ -103,12 +104,12 @@ mediaの親は観察・体調のどちらか一つ。Mermaidではこの排他�
 
 - 外部キーで存在しない記録への関連を拒否する。必須項目はNOT NULLとし、空文字や文字数なども入力規則で検証する。
 - observation_tagsとdictionary_evidenceは複合主キーで重複を防ぐ。タグは固定候補から始め、自由なタグ管理画面は初版必須にしない。
-- dictionary_items.kindはhypothesisまたはcue。意味の仮説とこちらからの合図を区別する。assessmentはsupports、contradicts、unknown。全体の評価や記録件数は関連から集計し、重複して保存しない。
-- 関連する辞書と観察が同じcatに属することは保存処理で確認する。行をまたぐ条件を通常のCHECKで保証できるとは扱わない。将来複数catを扱う際は複合外部キーなどでも保証する。
-- 回数は整数で1以上、体重はNUMERICで正の値、単位はkgまたはg。体重の値と単位は両方入力または両方NULL。体重イベントは値を必須とする。未観測の回数はNULLで保存し、ゼロと区別する。
-- appetite・energyの未入力はNULL。cat_responseが未入力なら「反応未記録」と表示する。responded_atはacted_at以降。観察より前の働きかけもあり得るため、観察日時との一律の前後制約は設けない。
-- 日時はTIMESTAMPTZ、体重は浮動小数点ではなくNUMERIC、容量はBIGINT。撮影・出来事・登録日時を区別し、撮影日時が不明ならNULL。撮影日時の出典はmetadata・user・unknownを記録する。端末の更新日時を撮影日時と断定しない。
-- submission_keyは観察・体調の新規送信ごとにサーバーが発行しUNIQUE制約を設ける。同じ送信の二重登録を防ぐが、認証・CSRFの代用にはしない。
+- dictionary_items.kindはhypothesisまたはcue。hypothesis型ではhypothesisを必須、cueをNULLとし、cue型ではcueを必須、hypothesisをNULLとする。dictionary_evidenceは仮説に対する根拠だけを扱い、assessmentはsupports、contradicts、unknown。合図の使用実績はinteractions.cue_item_idで関連づける。これにより「遊ぼう」という合図を使った場面を一覧にできる。全体の評価や記録件数は関連から集計する。
+- 関連する辞書と観察が同じcatに属することは保存処理で確認する。合図の関連でも同じcatでkind=cueであること、根拠の関連ではkind=hypothesisであることを確認する。関連作成と辞書更新は辞書行をロックしたトランザクションで行い、関連がある辞書のkind・cat_id変更を禁止する。行をまたぐ条件を通常のCHECKで保証できるとは扱わない。将来複数catを扱う際は複合外部キーなどでも保証する。
+- 体調記録は一つの出来事を表し、日単位の集計表とはしない。回数は嘔吐イベントの回数として整数で1以上とし、非嘔吐ではNULL。体重はNUMERICで正の有限値、単位はkgまたはg。体重の値と単位は両方入力または両方NULL。体重イベントは値を必須とし、非体重では値・単位をNULLとする。食事との間隔は嘔吐でのみ使う0以上の整数（分）。未観測の回数はNULLで保存し、ゼロと区別する。
+- appetite・energyの未入力はNULL。cat_responseが未入力なら「反応未記録」と表示する。acted_at・responded_atは不明ならNULLにでき、両方分かる場合だけresponded_atがacted_at以降であることを確認する。観察より前の働きかけもあり得るため、観察日時との一律の前後制約は設けない。
+- 日時はTIMESTAMPTZ（元のタイムゾーン名は保持しないためtimezone列へAsia/Tokyoを保存）、体重は浮動小数点ではなくNUMERIC、容量はBIGINT。撮影・出来事・登録日時を区別し、撮影日時が不明ならNULL。撮影日時の出典はmetadata・user・unknownを記録する。端末の更新日時を撮影日時と断定しない。
+- submission_keyは観察・体調の新規送信ごとにサーバーが発行しUNIQUE制約を設ける。フォーム表示時に発行したキーを再送時も使い、同じキーの保存済み結果を返す。同じキーで異なる入力が届いた場合は競合として拒否する。添付にもupload_keyのUNIQUE制約を設ける。認証・CSRFの代用にはしない。
 
 ### 検索と削除
 
@@ -116,15 +117,26 @@ cat_idとoccurred_atの複合インデックスを観察・体調へ設ける。
 
 親の削除に連動してコメント・働きかけ・関連表を削除する。観察を削除しても辞書項目は残し、根拠の関連だけを削除する。catの削除は初版の通常操作に含めず、関連がある間はRESTRICTとする。
 
-添付の期限切れ・個別削除ではmediaの管理行を残し、本文に理由を表示する。親の削除は、関連添付をdelete_pendingにして物理削除を完了してから行う。mediaの親外部キーはRESTRICTにし、DBのCASCADEだけでファイルが孤立しないようにする。失敗時は親を削除完了と表示せず、アプリ経由の添付配信を止めて再試行する。全削除では添付の物理削除を確認した後にDBの管理行も削除する。バックアップからの削除は別の保持方針に従う。
+添付の期限切れ・個別削除ではmediaの管理行を残し、本文に理由を表示する。親の削除ではdeletion_requested_atをDBに残し、通常の一覧から外して削除処理中と表示する。親行をロックして以後の編集・添付を拒否し、関連添付をdelete_pendingにする。ジョブが物理削除を完了した後、同じDBトランザクションでmediaの管理行を削除してから親行を削除する。途中で停止したらdeletion_requested_atから処理を再開する。mediaの親外部キーはRESTRICTにし、DBのCASCADEだけでファイルが孤立しないようにする。失敗時は親を削除完了と表示せず、アプリ経由の添付配信を止めて再試行する。辞書項目の削除は根拠の関連をCASCADEで削除し、interactions.cue_item_idはSET NULLとする。owner_actionの本文は残す。全削除中は書き込みを停止し、添付の物理削除を確認した後にDBの管理行も削除する。バックアップからの削除は別の保持方針に従う。
 
 ### 添付とDBの整合性
 
-ファイルとDBは同じトランザクションで更新できない。media.statusはpending・ready・failed・delete_pending・deletedを基本にする。容量予約、上限検証、管理行作成をDBトランザクションで行い、同時取り込みでも上限を越えないようロックで調整する。受信時には実際のバイト数を上限付きで数える。
+ファイルとDBは同じトランザクションで更新できない。media.statusはpending・ready・failed・delete_pending・deletedを基本にする。初版は記録本文の保存後に添付を一件ずつ送る二段階方式とする。添付失敗時は本文を残し、「本文保存済み・添付失敗」と表示して添付だけ再試行できる。
 
-一時ファイルへ受信・検証後、生成したキーの保存先へ移し、最後にreadyへ更新する。ready以外は配信しない。起動時に途中状態と孤立ファイルを確認して回復・片づけする。ログへ元ファイル名や内容を不要に出さない。
+1. 親が削除中でないことを確認し、アップロード開始要求でmedia行と容量予約を作る。単一飼い主のcats行をロックし、上限検証とreserved_bytesの予約を短いトランザクションで行う。申告サイズを上限として検証し、超過は拒否する。予約前にはファイル本文を受信しない。
+2. 予約IDに対して一ファイルを送信する。multipart解析前に予約の有効性を確認してpending行の排他ロックを取得し、受信から保存完了まで保持する。初版の小規模構成では接続を保持する方式とし、受信時間上限で長時間占有を防ぐ。重複送信は待たせず拒否する。multipart解析前のASGI受信処理でリクエスト全体のバイト数と時間を制限する。Content-Lengthだけを信用せず、ファイル数・フォーム数も制限する。UploadFileで受信し終わってからの検査だけを容量防御としない。
+3. 一時保存の容量も見込み、作業用領域に制限と空き容量の余裕を設ける。ファイルを上限付きで読み、内容を検証してmedia.bytesへ実サイズを記録する。
+4. 一時ファイルから同一ファイルシステム内の生成した保存キーへ移し、最後にreadyへ更新する。ready・親が有効・期限内（またはkeep）の条件をすべて満たす添付だけを配信する。
 
-保存期間はreadyになった時点から計算する。削除完了時にはdeleted_atを記録し、実在するファイルと取り込み中の容量予約を容量計算へ含める。プロフィール写真は初版ではプレースホルダーとし、添付の共有・派生ファイルは変換機能の追加時に設計する。
+readyになった時点から保存期間を計算する。pendingではbytes・mime_type・期限は未確定にできるが、readyでは有効な実サイズ、検証済み形式、保存開始と期限を必須とする。storage_keyとupload_keyは一意。期限はexpires_at = retention_started_at + 60日で保存し、初版の保存期間設定変更は新規添付だけに適用する。
+
+実在ファイル（削除待ち・片づけ待ちを含む）と未使用の予約を二重計上せずに容量計算する。失敗時は一時・保存先の双方を片づけてから予約を解放する。起動時にpendingと孤立ファイルを照合し、稼働中の処理が保持するロックを取得できない場合は触らない。長時間残った予約だけを期限切れとして回復・片づけする。
+
+ジョブは初版では一つの実行主体とし、HTTPの通常処理と独立した再実行可能なPython関数で実装する。起動時と稼働中に実行し、親削除・期限削除・残留予約を回復する。HTTP応答後の一回限りのBackgroundTasksを期限スケジューラーには使わない。初版のWebプロセスは一つとし、複数プロセス化する段階でジョブを分離する。
+
+期限削除と「残す」はmedia行の同じロックで直列化する。削除を開始した添付への「残す」は拒否し、復元できるように表示しない。ファイルが既に存在しない削除は成功として扱い、DB更新前に停止しても安全に再実行できるようにする。失敗はnext_retry_atで間隔を空けて再試行し、管理画面に表示する。削除完了時にdeleted_atを記録する。
+
+プロフィール写真は初版ではプレースホルダーとし、添付の共有・派生ファイルは変換機能の追加時に設計する。
 
 ## ベクトル検索とAI
 
@@ -140,7 +152,7 @@ cat_idとoccurred_atの複合インデックスを観察・体調へ設ける。
 
 1ファイル・合計容量の上限は実データ利用前に決める。上限超過では添付を止め、文章の記録は続けられるようにする。古いデータを黙って消さない。圧縮・変換は初版必須ではなく、必要性と対応形式を確認して追加する。
 
-MacBookへの保存完了を確認してからiPhoneの元ファイルを整理する。アプリからiPhoneの写真ライブラリを自動削除できない。DBとメディアを整合する形でバックアップし、保存先・保持期間・復元手順を別途決める。Dockerの永続保存はバックアップの代用ではない。
+iPhoneの原本を整理する前にMacBookへの保存と再生を確認し、必要なファイルは別のバックアップへ保存する。標準60日で消えるアプリだけを唯一のコピーにしない。アプリからiPhoneの写真ライブラリを自動削除できない。DBとメディアを整合する形でバックアップし、保存先・保持期間・復元手順を別途決める。Dockerの永続保存はバックアップの代用ではない。初版のバックアップは書き込みと期限ジョブを止めてDBダンプとメディアを一組で取得し、別のDockerボリュームへの復元を確認する。体調CSVは全データのバックアップとは扱わない。全データ出力はバージョン付きJSON、添付一覧、現存添付をまとめたファイルとし、出力中も変更を止めて整合させる。
 
 ## セキュリティ
 
@@ -150,6 +162,8 @@ MacBookへの保存完了を確認してからiPhoneの元ファイルを整理�
 
 DB・メディア・秘密はGitに含めない。認証情報は環境変数等で管理し、サンプルへ秘密値を入れない。ログへトークンやメディア内容を残さない。全データ出力・全削除など重要操作には誤操作防止を設ける。
 
+ブラウザへ配信するメディアは検証済みのContent-Typeとnosniffを付け、HTML・SVGなど能動的コンテンツは受け付けない。再生可否と保存の成功は別に表示する。ページへCSPを設定し、スクリプト・CSS・フォントはローカル配信する。ローカル無認証の初版はOSユーザーやローカルプロセスを隔離する仕組みではない。実装時にはCSRFトークンのブラウザとの結び付け、期限、Cookie設定も明文化する。
+
 ## 開発順序と検証
 
 1. Docker構成とER図：主キー、外部キー、多対多、永続保存を説明する。
@@ -158,14 +172,16 @@ DB・メディア・秘密はGitに含めない。認証情報は環境変数等
 4. メディアと保存管理：容量制限、失敗時の表示、期限処理、「残す」。
 5. 実機確認と後続：iPhone由来のHEIC・HEVC・向き・再生、LAN認証、意味検索。
 
-初版の完了条件は、観察を保存し、仮説を結びつけ、働きかけと反応を追記し、過去の記録と比較できること。体調の保存・出力を含む。保存済み、失敗、未送信を区別する。クラウド保存済みと表示しない。
+初版の完了条件は、観察を保存し、仮説を結びつけ、働きかけと反応を追記し、過去の記録と比較できること。体調の保存・出力、安全な添付保存、期限処理と失敗回復を含む。期限プレビューだけの段階は開発途中の試作と呼び、完成した初版とは区別する。保存済み、失敗、未送信を区別する。クラウド保存済みと表示しない。
 
-構文・起動・マイグレーション・主要操作を確認する。自動テストは保存整合性、入力拒否、日時・期限、CSVの引用と数式注入対策、安全な添付処理などに絞る。セキュリティ変更は正当な操作の成功と不正な操作の拒否を対で検証する。実機未確認は未確認と報告する。
+構文・起動・マイグレーション・主要操作を確認する。自動テストは保存整合性、入力拒否、日時・期限、CSVの引用と数式注入対策、安全な添付処理などに絞る。セキュリティ変更は正当な操作の成功と不正な操作の拒否を対で検証する。実機未確認は未確認と報告する。テスト用にもPostgreSQLを使い、SQLiteで代用して制約の差を見落とさない。代表的なiPhone動画で取り込み・再生を確認する。DB更新前後のプロセス停止、削除と「残す」の競合、容量予約の失効、バックアップ復元も検証対象にする。
 
 ## 設計レビューの結論と参照
 
-初版に大きな機能追加は不要。補完はUvicorn・Psycopg 3・python-multipart・設定管理・テスト、タグの関連、反応の後日追記、二重送信とファイル整合性に限定する。認証はLAN公開前、pgvector・動画変換・専用ジョブ基盤は後続とする。依存関係を固定し、更新時に脆弱性を確認する。Dockerで非root実行、DBの起動確認、機密を含まないログを整える。マイグレーション用とアプリ用のDB権限を分ける。
+初版に大きな機能追加は不要。補完はUvicorn・Psycopg 3・python-multipart・設定管理・テスト、タグの関連、反応の後日追記、二重送信とファイル整合性に限定する。認証はLAN公開前、pgvector・動画変換・専用ジョブ基盤は後続とする。依存関係を固定し、更新時に脆弱性を確認する。アプリを非root実行し、DBのhealthcheck成功 → Alembicの完了 → アプリ起動の順序を明示する。機密を含まないログを整える。マイグレーション用とアプリ用のDB権限を分ける。
 
+- [PostgreSQL：日時型](https://www.postgresql.org/docs/current/datatype-datetime.html) — TIMESTAMPTZと元のタイムゾーンの扱い。
+- [Docker Compose：起動順](https://docs.docker.com/compose/how-tos/startup-order/) — healthcheckとサービスの依存関係。
 - [PostgreSQL：制約](https://www.postgresql.org/docs/current/ddl-constraints.html) — 外部キー、複合キー、CHECKとその限界。
 - [SQLAlchemy：Session](https://docs.sqlalchemy.org/en/20/orm/session_basics.html) — Sessionとトランザクションの扱い。
 - [FastAPI：ファイル受信](https://fastapi.tiangolo.com/tutorial/request-files/) — multipartとUploadFile。
