@@ -18,7 +18,7 @@
 
 ## 技術と学習
 
-Python・FastAPI・Jinja2・PostgreSQLを採用し、SQLAlchemyでDBにアクセス、Alembicでテーブル構造の変更を管理する予定です。Docker ComposeでアプリとDBを動かし、PythonやPostgreSQLをMacBookへ直接インストールしない構成にします。MacBookにはDocker実行環境が必要です。
+Python・FastAPI・Jinja2・PostgreSQLを採用し、SQLAlchemyでDBにアクセス、Alembicでテーブル構造の変更を管理する予定です。Uvicorn、Psycopg 3、フォーム受信用のpython-multipart、pytest＋HTTPXも使います。DB操作は同期処理で始めます。Docker ComposeでアプリとDBを動かし、PythonやPostgreSQLをMacBookへ直接インストールしない構成にします。MacBookにはDocker実行環境が必要です。
 
 Pythonの入力検証からSQL、保存、画面表示まで説明し、主キー・外部キー・多対多の関連、トランザクション、HTTPとAPIを学べる構成にします。pgvectorによる意味検索は後続の学習段階で検討します。
 
@@ -33,3 +33,5 @@ MacBookの開発環境とGitHubリポジトリはセットアップ済みです�
 コードと設計資料をGitで管理し、動画・写真・音声・DB・認証情報はコミットしません。Dockerの永続保存領域へデータを保存し、バックアップは別途用意します。実データを外部AIへ送信しません。
 
 容量上限、バックアップ先と保持期間は未決定です。添付の標準保存期間は60日の予定ですが、期限処理を実装・検証するまでは設定のプレビューとして扱います。
+
+初版からCSRF対策、入力検証、SQLのパラメータ化、HTMLエスケープ、添付の検証と安全な保存、Host・送信元の検証を組み込みます。観察・辞書・体調とその関連を10テーブルに分け、設計書に各テーブルの理由と制約を記載しています。現時点では対策も未実装です。
