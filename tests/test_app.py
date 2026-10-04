@@ -203,3 +203,31 @@ def test_application_role_cannot_create_tables(client):
     from sqlalchemy.exc import ProgrammingError
     with pytest.raises(ProgrammingError):
         with transaction() as db: db.execute(text('CREATE TABLE forbidden_table (id int)'))
+
+
+@pytest.mark.parametrize('variant,accepted', [
+    ('alternate', True), ('unknown', False), ('no_fallback', False),
+    ('default_apac', False), ('audio_only', False),
+])
+def test_iphone_alternate_audio(tmp_path, monkeypatch, variant, accepted):
+    from app.media import inspect_file
+    streams = [
+        {'codec_type': 'video', 'codec_name': 'hevc'},
+        {'codec_type': 'audio', 'codec_name': 'aac', 'disposition': {'default': 1}},
+        {'codec_type': 'audio', 'codec_tag_string': 'apac', 'disposition': {'default': 0}},
+        {'codec_type': 'data', 'codec_tag_string': 'mebx'},
+    ]
+    if variant == 'unknown': streams[2]['codec_tag_string'] = 'xxxx'
+    if variant == 'default_apac': streams[2]['disposition']['default'] = 1
+    if variant == 'no_fallback': streams.pop(1)
+    if variant == 'audio_only': streams.pop(0)
+    result = subprocess.CompletedProcess([], 0, stdout=json.dumps({
+        'streams': streams, 'format': {'format_name': 'mov,mp4,m4a,3gp,3g2,mj2'}
+    }).encode())
+    monkeypatch.setattr(subprocess, 'run', lambda *args, **kwargs: result)
+    if accepted:
+        assert inspect_file(tmp_path/'video', 'iphone.MOV') == 'video/quicktime'
+    else:
+        with pytest.raises(HTTPException) as error:
+            inspect_file(tmp_path/'video', 'iphone.MOV')
+        assert error.value.status_code == 415

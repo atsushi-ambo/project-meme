@@ -32,7 +32,7 @@ if (panel) {
         xhr.setRequestHeader('X-CSRF-Token',csrf);
         xhr.timeout = 330000;
         xhr.upload.onprogress = e => { status.textContent = e.lengthComputable ? `送信中 ${Math.round(e.loaded/e.total*100)}% · 検証完了までお待ちください` : '送信中…'; };
-        xhr.onload = () => { if (xhr.status>=200 && xhr.status<300) resolve(); else { let message='添付を保存できませんでした。'; try { message=JSON.parse(xhr.responseText).detail || message; } catch (_) {} reject(new Error(message)); } };
+        xhr.onload = () => { if (xhr.status>=200 && xhr.status<300) resolve(); else { if ([413,415,422].includes(xhr.status)) key = crypto.randomUUID(); let message='添付を保存できませんでした。'; try { message=JSON.parse(xhr.responseText).detail || message; } catch (_) {} reject(new Error(message)); } };
         xhr.onerror = () => reject(new Error('通信が切れました。本文は保存されています。'));
         xhr.ontimeout = () => reject(new Error('送信時間を超えました。本文は保存されています。'));
         xhr.send(file);

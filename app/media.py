@@ -70,7 +70,7 @@ def inspect_file(path, name):
         raise HTTPException(415, '対応形式はMOV/MP4（HEVC・H.264）、JPEG/PNG、M4A/MP3/WAVです。')
     # 固定のローカルパスのみ。ネットワークプロトコルやプレイリストを許可しない。
     command = ['ffprobe','-v','error','-protocol_whitelist','file','-format_whitelist','mov,mp3,wav',
-        '-show_entries','stream=codec_type,codec_name:format=format_name,duration','-of','json', str(path)]
+        '-show_entries','stream=codec_type,codec_name,codec_tag_string:stream_disposition=default:format=format_name,duration','-of','json', str(path)]
     try:
         result = subprocess.run(command, capture_output=True, timeout=15, check=True)
         info = json.loads(result.stdout)
@@ -81,9 +81,20 @@ def inspect_file(path, name):
             raise ValueError('streams')
         if any(s.get('codec_name') not in {'hevc','h264'} for s in video):
             raise ValueError('video_codec')
-        if any(s.get('codec_name') not in {'aac','mp3','alac','pcm_s16le','pcm_s24le','pcm_f32le'} for s in audio):
-            raise ValueError('audio_codec')
         fmt = info['format']['format_name'].split(',')
+        # iPhoneの空間音声は通常のAACと別トラックに入る。古いffprobeでは
+        # APACのcodec_nameが得られないため、非既定の補助トラックだけ許可する。
+        aac_fallback = any(s.get('codec_name') == 'aac' and
+                           s.get('disposition', {}).get('default') == 1 for s in audio)
+        for stream in audio:
+            if stream.get('codec_name') in {'aac','mp3','alac','pcm_s16le','pcm_s24le','pcm_f32le'}:
+                continue
+            if (video and 'mov' in fmt and aac_fallback
+                    and stream.get('codec_tag_string') == 'apac'
+                    and stream.get('codec_name') in {None, 'apac'}
+                    and stream.get('disposition', {}).get('default') == 0):
+                continue
+            raise ValueError('audio_codec')
         if video and suffix in {'.mov','.mp4'} and 'mov' in fmt:
             return 'video/mp4' if suffix == '.mp4' else 'video/quicktime'
         if not video and audio:
