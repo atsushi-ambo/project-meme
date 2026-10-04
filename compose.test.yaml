@@ -1,16 +1,45 @@
+# テスト専用。compose.yamlとは重ねず、scripts/test.pyから使用する。
+name: project-meme-test
+x-test-app: &test-app
+  build: .
+  image: ${COMPOSE_PROJECT_NAME}:test
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  environment: &test-env
+    DATABASE_URL: postgresql+psycopg://meme_app:test-app-only@db:5432/meme
+    SECRET_KEY: test-only-key-never-used-outside-disposable-environment
+    MEDIA_ROOT: /tmp/meme-test-media
+    BASE_URL: http://localhost:8000
+    JOB_INTERVAL: '3600'
+    MEME_TEST_MODE: '1'
 services:
+  db:
+    image: postgres:18-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
+    environment:
+      POSTGRES_DB: meme
+      POSTGRES_USER: meme_owner
+      POSTGRES_PASSWORD: test-owner-only
+      APP_DB_PASSWORD: test-app-only
+    volumes:
+      - postgres:/var/lib/postgresql
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U meme_owner -d meme']
+      interval: 2s
+      timeout: 3s
+      retries: 30
   migrate:
-    volumes: !override []
+    <<: *test-app
     environment:
-      MEDIA_ROOT: /tmp/meme-test-media
+      <<: *test-env
+      DATABASE_URL: postgresql+psycopg://meme_owner:test-owner-only@db:5432/meme
+    command: [alembic, upgrade, head]
+    depends_on:
+      db: {condition: service_healthy}
   tests:
-    image: project-meme:local
+    <<: *test-app
     command: [python, -m, pytest, -q, -p, no:cacheprovider, tests]
-    environment:
-      DATABASE_URL: postgresql+psycopg://meme_app:${APP_DB_PASSWORD}@db:5432/meme
-      SECRET_KEY: ${SECRET_KEY}
-      MEDIA_ROOT: /tmp/meme-test-media
-      BASE_URL: http://localhost:8000
-      JOB_INTERVAL: '3600'
     depends_on:
       migrate: {condition: service_completed_successfully}
+volumes:
+  postgres:

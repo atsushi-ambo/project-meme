@@ -78,7 +78,7 @@ class InteractionInput(Input):
         if not self.owner_action and not self.cat_response:
             raise ValueError('自分がしたこと、またはメメのその後を入力してください。')
         if self.acted_at and self.responded_at and self.responded_at < self.acted_at:
-            raise ValueError('反応日時は働きかけの日時以降にしてください。')
+            raise ValueError('メメのその後を見た日時は、自分がした日時以降にしてください。')
         return self
 
 class EvidenceInput(Input):

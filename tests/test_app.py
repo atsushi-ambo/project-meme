@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import re
 import subprocess
@@ -20,6 +21,7 @@ from app.schemas import HealthInput
 
 @pytest.fixture
 def client():
+    assert os.environ.get('MEME_TEST_MODE') == '1' and settings.media_root == Path('/tmp/meme-test-media'), 'Use python3 scripts/test.py; refusing to clear non-test data'
     settings.media_root.mkdir(parents=True, exist_ok=True)
     (settings.media_root/'staging').mkdir(exist_ok=True)
     (settings.media_root/'deleting-all').unlink(missing_ok=True)
@@ -85,7 +87,10 @@ def test_dictionary_and_later_response(client):
     assert post(client,f'/observations/{id}/interaction',dict(owner_action='声をかけた',cue_item_id=cid)).status_code==303
     with transaction() as db: iid=db.scalar(select(Interaction.id))
     assert post(client,f'/observations/{id}/interaction',dict(id=iid,owner_action='声をかけた',cue_item_id=cid,cat_response='近づいた')).status_code==303
+    assert post(client,f'/observations/{id}/interaction',dict(id=iid,owner_action='声をかけた',cat_response='近づいた')).status_code==303
+    with transaction() as db: assert db.get(Interaction,iid).cue_item_id==cid
     assert '近づいた' in client.get(f'/dictionary/{cid}').text
+    assert 'メメのその後' in client.get(f'/dictionary/{cid}').text
     assert post(client,f'/observations/{id}/evidence',dict(dictionary_item_id=cid,assessment='supports')).status_code==422
     assert post(client,f'/dictionary/{cid}/delete',dict(confirm='削除')).status_code==303
     with transaction() as db:
@@ -289,7 +294,9 @@ def test_simple_observation_followup_and_guesses(client):
     id=observation(client)
     response=client.get(f'/entries/observation/{id}')
     assert response.status_code==200
-    assert 'その後や予想も残す（任意）' in response.text
+    assert '何を伝えたかったと思う？（任意）' in response.text
+    assert '日時や使った合図' not in response.text
+    assert 'あとから思い出したことを足す' not in response.text
     assert '家のどこ？（任意）' in client.get('/entries/observation/new').text
     assert post(client,f'/observations/{id}/interaction',{'owner_action':'','cat_response':'廊下へ走っていった'}).status_code==303
     assert post(client,f'/observations/{id}/interaction',{'owner_action':'','cat_response':''}).status_code==422
@@ -311,7 +318,8 @@ def test_simple_observation_followup_and_guesses(client):
     assert post(client,url,{'guesses':['item:99999999999999999999999']}).status_code==422
     with transaction() as db: assert len(list(db.scalars(select(DictionaryItem))))==2
     response=client.get(f'/entries/observation/{id}')
-    assert response.status_code==200 and '以前の根拠' in response.text
+    assert response.status_code==200 and '以前の根拠' in response.text and '合っていそう' in response.text
+    assert '以前の評価' not in response.text
     assert 'value="preset:play"' not in response.text
     bad,result=upload(client,id,b'not a video','bad.mov');assert result.status_code==415
     run_jobs()
@@ -342,3 +350,58 @@ def test_profile_photo_lifecycle(client):
     assert client.put('/api/profile-photo',content=png(),headers=headers).status_code==200
     assert post(client,'/delete-all',{'confirm':'メメの全記録を削除'}).status_code==303
     assert client.get('/profile-icon').status_code==404
+
+
+
+def test_one_memo_ui_preserves_legacy_notes(client):
+    id=observation(client,description='おもちゃを持ってきた。立つと走っていった。')
+    assert post(client,f'/observations/{id}/comment',{'body':'保存済みの補足'}).status_code==303
+    assert post(client,f'/observations/{id}/interaction',{'owner_action':'椅子から立った','cat_response':'廊下へ走った'}).status_code==303
+    detail=client.get(f'/entries/observation/{id}').text
+    assert '保存済みの補足' in detail and '廊下へ走った' in detail
+    assert f'action="/observations/{id}/comment"' not in detail
+    assert f'action="/observations/{id}/interaction"' not in detail
+    assert 'name="owner_action"' not in detail and 'name="cat_response"' not in detail
+    assert '使った合図' not in detail and 'その後を残す' not in detail
+    form=client.get(f'/entries/observation/{id}/edit').text
+    assert form.count('<textarea')==1
+    assert '記入例（保存されません）' in form
+    assert 'おもちゃを持ってきた。立つと走っていった。</textarea>' in form
+    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T12:00',description='まとめたメモ',location='',submission_key=str(uuid.uuid4()))).status_code==303
+    detail=client.get(f'/entries/observation/{id}').text
+    assert 'まとめたメモ' in detail and '保存済みの補足' in detail and '廊下へ走った' in detail
+
+
+
+def test_response_only_creation_and_partial_update(client):
+    from datetime import datetime, timezone
+    id=observation(client)
+    url=f'/observations/{id}/interaction'
+    assert post(client,url,{'cat_response':'廊下へ走った'}).status_code==303
+    with transaction() as db:
+        row=db.scalar(select(Interaction))
+        assert row.owner_action=='' and row.cat_response=='廊下へ走った'
+        iid=row.id
+    assert post(client,url,dict(id=iid,owner_action='立ち上がった',acted_at='2026-01-02T12:00',responded_at='2026-01-02T12:05')).status_code==303
+    assert post(client,url,dict(id=iid,cat_response='こちらを見た')).status_code==303
+    with transaction() as db:
+        row=db.get(Interaction,iid)
+        assert row.owner_action=='立ち上がった'
+        assert row.acted_at==datetime(2026,1,2,3,tzinfo=timezone.utc)
+        assert row.responded_at==datetime(2026,1,2,3,5,tzinfo=timezone.utc)
+    assert post(client,url,dict(id=iid,cat_response='不正な更新',responded_at='2026-01-02T11:59')).status_code==422
+    with transaction() as db:
+        row=db.get(Interaction,iid)
+        assert row.cat_response=='こちらを見た' and row.responded_at.minute==5
+
+
+
+def test_search_in_legacy_comment_escapes_wildcards(client):
+    first=observation(client,description='本文には探す語がない')
+    second=observation(client,description='別の記録')
+    assert post(client,f'/observations/{first}/comment',{'body':'補足の literal%_needle'}).status_code==303
+    assert post(client,f'/observations/{second}/comment',{'body':'補足の literalXXneedle'}).status_code==303
+    response=client.get('/observations',params={'q':'literal%_needle'})
+    assert response.status_code==200
+    assert f'href="/entries/observation/{first}"' in response.text
+    assert f'href="/entries/observation/{second}"' not in response.text
