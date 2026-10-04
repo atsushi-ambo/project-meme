@@ -8,3 +8,13 @@
 .datetime-actions button{padding:7px 12px;font-size:13px;min-height:40px}
 .media-grid details{margin-top:16px}
 @media(max-width:480px){.datetime-fields{grid-template-columns:1fr 1fr}.datetime-fields label:first-child{grid-column:1/-1}.datetime-picker{padding:12px}}
+
+.followup-section + .followup-section{border-top:1px solid var(--line);margin-top:30px;padding-top:26px}
+.followup-section details{margin:18px 0}
+.followup-section details + button{margin-top:14px}
+.guess-options{padding:8px 0;gap:8px 18px}
+.guess-options label{margin:4px 0;padding:7px 10px;background:#f0f2e9;border-radius:8px}
+.guess-saved{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding:12px 0}
+.optional-notes>summary .muted{display:block;margin-top:4px}
+
+.guess-saved>form{flex-shrink:0}.guess-saved button{white-space:nowrap}

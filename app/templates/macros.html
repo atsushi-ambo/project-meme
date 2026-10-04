@@ -1,7 +1,14 @@
 {% macro token(csrf) %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
 {% macro interaction(csrf, id, items, row=none) %}
-<form method="post" action="/observations/{{ id }}/interaction">{{ token(csrf) }}{% if row %}<input type="hidden" name="id" value="{{ row.id }}">{% endif %}
-<label>こちらがしたこと<textarea name="owner_action" required maxlength="3000">{{ row.owner_action if row else '' }}</textarea></label>
-<div class="columns"><label>働きかけの日時（不明なら空欄）<input type="datetime-local" name="acted_at" value="{{ row.acted_at|inputtime if row else '' }}"></label><label>使った合図<select name="cue_item_id"><option value="">指定なし</option>{% for item in items if item.kind=='cue' %}<option value="{{ item.id }}" {% if row and row.cue_item_id==item.id %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label></div>
-<label>メメの反応（後から追記できます）<textarea name="cat_response" maxlength="3000">{{ row.cat_response or '' if row else '' }}</textarea></label><label>反応の日時（不明なら空欄）<input type="datetime-local" name="responded_at" value="{{ row.responded_at|inputtime if row else '' }}"></label><button>働きかけと反応を保存</button></form>
+<form method="post" action="/observations/{{ id }}/interaction">
+{{ token(csrf) }}{% if row %}<input type="hidden" name="id" value="{{ row.id }}">{% endif %}
+<p class="muted">どちらか一つだけでも保存できます。特に何かする必要はありません。</p>
+<label>自分がしたこと（任意）<textarea name="owner_action" maxlength="3000" rows="2" placeholder="例：仕事中だったので椅子から立った。／おもちゃで遊んだ。">{{ row.owner_action if row else '' }}</textarea></label>
+<label>メメのその後（任意）<textarea name="cat_response" maxlength="3000" rows="2" placeholder="例：廊下へ走り、離れたところからこちらを見ていた。">{{ row.cat_response or '' if row else '' }}</textarea></label>
+<p class="muted">「喜んだ」より「おもちゃを追った」など、見えたことをそのまま。分からない部分は空欄で大丈夫です。</p>
+<details><summary>日時や使った合図も残す（任意）</summary>
+<label>自分が動いた日時<input type="datetime-local" name="acted_at" value="{{ row.acted_at|inputtime if row else '' }}"></label>
+<label>メメのその後を見た日時<input type="datetime-local" name="responded_at" value="{{ row.responded_at|inputtime if row else '' }}"></label>
+<label>使った合図<select name="cue_item_id"><option value="">指定なし</option>{% for item in items if item.kind=='cue' %}<option value="{{ item.id }}" {% if row and row.cue_item_id==item.id %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label>
+</details><button>その後を保存</button></form>
 {% endmacro %}

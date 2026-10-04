@@ -62,7 +62,7 @@ class DictionaryInput(Input):
 
 class InteractionInput(Input):
     acted_at: datetime | None = None
-    owner_action: str = Field(min_length=1, max_length=3000)
+    owner_action: str = Field(default='', max_length=3000)
     cue_item_id: int | None = None
     cat_response: str | None = Field(default=None, max_length=3000)
     responded_at: datetime | None = None
@@ -75,6 +75,8 @@ class InteractionInput(Input):
 
     @model_validator(mode='after')
     def order(self):
+        if not self.owner_action and not self.cat_response:
+            raise ValueError('自分がしたこと、またはメメのその後を入力してください。')
         if self.acted_at and self.responded_at and self.responded_at < self.acted_at:
             raise ValueError('反応日時は働きかけの日時以降にしてください。')
         return self
@@ -97,3 +99,7 @@ class ReserveInput(Input):
 class MediaTimeInput(Input):
     captured_at: datetime | None = None
     _time = field_validator('captured_at', mode='before')(parse_time)
+
+
+class GuessesInput(Input):
+    guesses: list[str] = Field(min_length=1, max_length=30)

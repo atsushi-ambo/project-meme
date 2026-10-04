@@ -283,3 +283,39 @@ def test_capture_time_edit_security(client):
         row=db.get(Media,mid);assert row.captured_at is None and row.captured_at_source=='unknown'
     assert post(client,f'/media/{mid}/delete',{}).status_code==303
     assert post(client,url,{'captured_at':'2026-01-01T12:00'}).status_code==409
+
+
+def test_simple_observation_followup_and_guesses(client):
+    id=observation(client)
+    response=client.get(f'/entries/observation/{id}')
+    assert response.status_code==200
+    assert 'その後や予想も残す（任意）' in response.text
+    assert '家のどこ？（任意）' in client.get('/entries/observation/new').text
+    assert post(client,f'/observations/{id}/interaction',{'owner_action':'','cat_response':'廊下へ走っていった'}).status_code==303
+    assert post(client,f'/observations/{id}/interaction',{'owner_action':'','cat_response':''}).status_code==422
+    url=f'/observations/{id}/guesses'
+    assert client.post(url,data={'guesses':['preset:play']},headers={'Origin':'http://localhost:8000'}).status_code==403
+    assert post(client,url,{'guesses':['preset:play','preset:attention']}).status_code==303
+    assert post(client,url,{'guesses':['preset:play','preset:play']}).status_code==303
+    with transaction() as db:
+        items=list(db.scalars(select(DictionaryItem)))
+        assert len(items)==2
+        links=list(db.scalars(select(Evidence)))
+        assert len(links)==2 and all(e.assessment=='unknown' for e in links)
+        links[0].rationale='以前の根拠';links[0].assessment='supports'
+        existing_id=links[0].dictionary_item_id
+    assert post(client,url,{'guesses':[f'item:{existing_id}']}).status_code==303
+    with transaction() as db:
+        e=db.get(Evidence,(existing_id,id));assert e.rationale=='以前の根拠' and e.assessment=='supports'
+    assert post(client,url,{'guesses':['preset:food','preset:invalid']}).status_code==422
+    assert post(client,url,{'guesses':['item:99999999999999999999999']}).status_code==422
+    with transaction() as db: assert len(list(db.scalars(select(DictionaryItem))))==2
+    response=client.get(f'/entries/observation/{id}')
+    assert response.status_code==200 and '以前の根拠' in response.text
+    assert 'value="preset:play"' not in response.text
+    bad,result=upload(client,id,b'not a video','bad.mov');assert result.status_code==415
+    run_jobs()
+    assert 'bad.mov' not in client.get(f'/entries/observation/{id}').text
+    assert 'bad.mov' in client.get('/storage').text
+    assert post(client,f'/entries/observation/{id}/delete',{'confirm':'削除'}).status_code==303
+    assert post(client,url,{'guesses':['preset:food']}).status_code==404

@@ -82,3 +82,38 @@ def save_evidence(db, observation_id, data):
     row = db.get(Evidence, (item.id, observation.id)) or Evidence(dictionary_item_id=item.id, observation_id=observation.id)
     row.assessment, row.rationale = data.assessment, data.rationale
     db.add(row)
+
+
+LOCATIONS = ['リビング', 'キッチン・台所', '寝室', '仕事部屋', '階段', '廊下', '玄関', '2階の部屋', '物置', 'トイレ', 'その他']
+GUESS_PRESETS = {
+    'play': '遊びたい', 'food': 'ごはんがほしい', 'attention': 'かまってほしい',
+    'door': 'ドアを開けてほしい', 'follow': 'ついてきてほしい',
+    'concern': '何かが気になる・嫌そう', 'unknown': 'まだ分からない',
+}
+
+
+def add_guesses(db, observation_id, choices):
+    # 他の観察から同じ候補を追加しても辞書が重複しないよう猫単位で直列化。
+    db.scalar(select(Cat).where(Cat.id == 1).with_for_update())
+    observation = parent(db, 'observation', observation_id, True)
+    for choice in set(choices):
+        prefix, _, value = choice.partition(':')
+        if prefix == 'preset' and value in GUESS_PRESETS:
+            title = GUESS_PRESETS[value]
+            item = db.scalar(select(DictionaryItem).where(DictionaryItem.cat_id == observation.cat_id,
+                DictionaryItem.kind == 'hypothesis', DictionaryItem.title == title).order_by(DictionaryItem.id))
+            if item is None:
+                item = DictionaryItem(cat_id=observation.cat_id, kind='hypothesis', title=title,
+                    hypothesis=title, notes='入力候補から追加した飼い主の予想。意味が確定したものではありません。')
+                db.add(item)
+                db.flush()
+        elif prefix == 'item' and value.isdecimal() and len(value) <= 19 and int(value) <= 9223372036854775807:
+            item = db.get(DictionaryItem, int(value))
+            if not item or item.kind != 'hypothesis' or item.cat_id != observation.cat_id:
+                raise HTTPException(422, 'この予想は選択できません。')
+        else:
+            raise HTTPException(422, '予想の選択内容を確認してください。')
+        if db.get(Evidence, (item.id, observation.id)) is None:
+            db.add(Evidence(dictionary_item_id=item.id, observation_id=observation.id,
+                            assessment='unknown', rationale=''))
+            db.flush()

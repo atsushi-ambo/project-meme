@@ -18,8 +18,8 @@ from starlette.background import BackgroundTask
 from .config import settings
 from .db import transaction
 from .models import Cat, Tag, Observation, Health, Comment, Interaction, DictionaryItem, Evidence, Media, now
-from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, MediaTimeInput, JST
-from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS
+from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, MediaTimeInput, GuessesInput, JST
+from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS, LOCATIONS, GUESS_PRESETS, add_guesses
 from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes
 from .exports import health_csv, export_zip
 from .security import SecurityMiddleware
@@ -67,7 +67,7 @@ templates.env.filters['size'] = lambda v: f'{(v or 0)/1_000_000:.1f} MB'
 def render(request, template, **context):
     return templates.TemplateResponse(request=request, name=template, context={
         'csrf':request.state.csrf, 'labels':LABELS, 'assessments':ASSESSMENTS,
-        'conditions':CONDITIONS, 'now':now(), 'timedelta':timedelta, 'settings':settings, **context})
+        'conditions':CONDITIONS, 'locations':LOCATIONS, 'guess_presets':GUESS_PRESETS, 'now':now(), 'timedelta':timedelta, 'settings':settings, **context})
 
 @app.exception_handler(Exception)
 async def unexpected_error(request, exc):
@@ -193,7 +193,7 @@ async def read_form(request):
     supplied = str(form.get('csrf',''))
     if not secrets.compare_digest(supplied, request.state.csrf):
         raise HTTPException(403,'送信を確認できません。ページを開き直してください。')
-    return {key:form.getlist(key) if key=='tags' else value for key,value in form.items() if key!='csrf'}
+    return {key:form.getlist(key) if key in {'tags','guesses'} else value for key,value in form.items() if key!='csrf'}
 
 @app.post('/entries/{kind}/save')
 @app.post('/entries/{kind}/{id}/save')
@@ -220,6 +220,19 @@ async def entry_delete(request:Request,kind:str,id:int):
         with transaction() as db: request_delete(db,kind,id)
         safe_jobs()
         return RedirectResponse('/storage',303)
+    return await anyio.to_thread.run_sync(process)
+
+@app.post('/observations/{id}/guesses')
+async def observation_guesses(request: Request, id: int):
+    raw = await read_form(request)
+    try:
+        data = GuessesInput.model_validate(raw)
+    except ValidationError:
+        raise HTTPException(422, '追加する予想を選んでください。')
+    def process():
+        with transaction() as db:
+            add_guesses(db, id, data.guesses)
+        return RedirectResponse(f'/entries/observation/{id}', 303)
     return await anyio.to_thread.run_sync(process)
 
 @app.post('/observations/{id}/{action}')
