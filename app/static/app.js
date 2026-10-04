@@ -114,3 +114,23 @@ if (panel) {
     finally { button.disabled = false; }
   });
 }
+
+const photoButton = document.querySelector('#profile-photo-save');
+if (photoButton) photoButton.addEventListener('click', async () => {
+  const file = document.querySelector('#profile-photo-input').files[0];
+  const status = document.querySelector('#profile-photo-status');
+  if (!file) { status.textContent = '写真を選んでください。'; return; }
+  if (file.size > 10000000) { status.textContent = '写真は10MB以内で選んでください。'; return; }
+  photoButton.disabled = true;
+  status.textContent = '写真を保存しています…';
+  try {
+    const response = await fetch('/api/profile-photo', {method:'PUT', headers:{
+      'Content-Type':'application/octet-stream',
+      'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content
+    }, body:file});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || '保存できませんでした。');
+    location.reload();
+  } catch (error) { status.textContent = error.message; }
+  finally { photoButton.disabled = false; }
+});

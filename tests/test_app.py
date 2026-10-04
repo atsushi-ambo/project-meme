@@ -319,3 +319,26 @@ def test_simple_observation_followup_and_guesses(client):
     assert 'bad.mov' in client.get('/storage').text
     assert post(client,f'/entries/observation/{id}/delete',{'confirm':'削除'}).status_code==303
     assert post(client,url,{'guesses':['preset:food']}).status_code==404
+
+
+def test_profile_photo_lifecycle(client):
+    import zipfile
+    token=csrf(client)
+    headers={'Origin':'http://localhost:8000','X-CSRF-Token':token}
+    assert client.put('/api/profile-photo',content=png(),headers={'Origin':'http://localhost:8000'}).status_code==403
+    assert client.put('/api/profile-photo',content=png(),headers=headers).status_code==200
+    assert 'src="/profile-photo"' in client.get('/').text
+    assert client.get('/profile-icon').headers['content-type']=='image/png'
+    with Image.open(io.BytesIO(client.get('/profile-photo').content)) as photo:
+        assert photo.format=='JPEG' and not photo.getexif()
+    saved=client.get('/profile-photo').content
+    assert client.put('/api/profile-photo',content=b'<svg></svg>',headers=headers).status_code==415
+    assert client.get('/profile-photo').content==saved
+    result=post(client,'/export',{'confirm':'出力'})
+    with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
+        assert archive.read('media/profile.jpg')==saved
+    assert post(client,'/profile-photo/delete',{}).status_code==303
+    assert client.get('/profile-photo').status_code==404
+    assert client.put('/api/profile-photo',content=png(),headers=headers).status_code==200
+    assert post(client,'/delete-all',{'confirm':'メメの全記録を削除'}).status_code==303
+    assert client.get('/profile-icon').status_code==404

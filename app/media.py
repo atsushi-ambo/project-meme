@@ -236,6 +236,8 @@ def run_jobs(at=None):
                 db.execute(delete(DictionaryItem))
                 cat = db.get(Cat, 1)
                 cat.name, cat.notes, cat.birthday = 'メメ', '', None
+                (settings.media_root / 'profile.jpg').unlink(missing_ok=True)
+                (settings.media_root / 'profile.tmp').unlink(missing_ok=True)
                 db.flush()
                 # DB commit後にマーカーを消す。失敗時は次の周期に再実行。
                 db.commit()

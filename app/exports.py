@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from .db import transaction
 from .models import Base, Media
 from .media import paths
+from .profile_photo import photo_path
 
 # Excel等がセルの内容を式として実行しないようにする。
 def csv_cell(value):
@@ -48,6 +49,8 @@ def export_zip(destination=None):
                 data = {'format_version':1, 'tables':{}}
                 for table in Base.metadata.sorted_tables:
                     data['tables'][table.name] = [dict(r) for r in db.execute(select(table)).mappings()]
+                if photo_path().is_file():
+                    archive.write(photo_path(), 'media/profile.jpg')
                 archive.writestr('records.json', json.dumps(data, ensure_ascii=False, default=json_default))
                 for row in db.scalars(select(Media).where(Media.status == 'ready')):
                     file, _ = paths(row.storage_key)

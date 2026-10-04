@@ -23,6 +23,7 @@ from .services import parent, save_entry, save_dictionary, save_interaction, sav
 from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes
 from .exports import health_csv, export_zip
 from .security import SecurityMiddleware
+from .profile_photo import photo_path, save_photo, icon_bytes, MAX_PHOTO_BYTES
 
 log = logging.getLogger('meme')
 
@@ -66,7 +67,7 @@ templates.env.filters['size'] = lambda v: f'{(v or 0)/1_000_000:.1f} MB'
 
 def render(request, template, **context):
     return templates.TemplateResponse(request=request, name=template, context={
-        'csrf':request.state.csrf, 'labels':LABELS, 'assessments':ASSESSMENTS,
+        'has_profile_photo':photo_path().is_file(), 'csrf':request.state.csrf, 'labels':LABELS, 'assessments':ASSESSMENTS,
         'conditions':CONDITIONS, 'locations':LOCATIONS, 'guess_presets':GUESS_PRESETS, 'now':now(), 'timedelta':timedelta, 'settings':settings, **context})
 
 @app.exception_handler(Exception)
@@ -377,3 +378,37 @@ async def delete_all(request:Request):
         safe_jobs()
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
+
+
+@app.get('/profile-photo')
+def profile_photo():
+    if not photo_path().is_file(): raise HTTPException(404)
+    return FileResponse(photo_path(), media_type='image/jpeg')
+
+@app.get('/profile-icon')
+def profile_icon():
+    with transaction() as db:
+        if not photo_path().is_file(): raise HTTPException(404)
+        return Response(icon_bytes(), media_type='image/png')
+
+@app.put('/api/profile-photo')
+async def upload_profile_photo(request: Request):
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > MAX_PHOTO_BYTES:
+            raise HTTPException(413, '写真は10MB以内で選んでください。')
+    def process():
+        with transaction(exclusive=True):
+            save_photo(data)
+    await anyio.to_thread.run_sync(process)
+    return {'status': 'ready'}
+
+@app.post('/profile-photo/delete')
+async def delete_profile_photo(request: Request):
+    await read_form(request)
+    def process():
+        with transaction(exclusive=True):
+            photo_path().unlink(missing_ok=True)
+    await anyio.to_thread.run_sync(process)
+    return RedirectResponse('/storage', 303)
