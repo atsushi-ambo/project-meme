@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 from .config import settings
 from .db import transaction
 from .models import Cat, Tag, Observation, Health, Comment, Interaction, DictionaryItem, Evidence, Media, now
-from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, JST
+from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, MediaTimeInput, JST
 from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS
 from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes
 from .exports import health_csv, export_zip
@@ -305,6 +305,26 @@ def media_file(id:int):
         path,_=paths(row.storage_key)
         if not path.is_file(): raise HTTPException(404,'添付が見つかりません。')
         return FileResponse(path,media_type=row.mime_type)
+
+@app.post('/media/{id}/captured-at')
+async def media_capture_time(request: Request, id: int):
+    raw = await read_form(request)
+    try:
+        data = MediaTimeInput.model_validate(raw)
+    except ValidationError:
+        raise HTTPException(422, '撮影日時を正しく入力してください。')
+    def process():
+        with transaction() as db:
+            row = db.get(Media, id, with_for_update=True)
+            if not row or row.status != 'ready' or (not row.keep and row.expires_at <= now()):
+                raise HTTPException(409, 'この添付の撮影日時は変更できません。')
+            kind = 'observation' if row.observation_id else 'health'
+            parent_id = row.observation_id or row.health_entry_id
+            parent(db, kind, parent_id)
+            row.captured_at = data.captured_at
+            row.captured_at_source = 'user' if data.captured_at else 'unknown'
+        return RedirectResponse(f'/entries/{kind}/{parent_id}', 303)
+    return await anyio.to_thread.run_sync(process)
 
 @app.post('/media/{id}/{action}')
 async def media_action(request:Request,id:int,action:str):

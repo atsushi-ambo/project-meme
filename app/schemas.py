@@ -92,3 +92,8 @@ class ReserveInput(Input):
     upload_key: UUID
     captured_at: datetime | None = None
     _time = field_validator('captured_at', mode='before')(parse_time)
+
+
+class MediaTimeInput(Input):
+    captured_at: datetime | None = None
+    _time = field_validator('captured_at', mode='before')(parse_time)

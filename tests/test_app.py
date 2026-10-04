@@ -43,9 +43,9 @@ def observation(client,description='食事前に鳴いた',key=None):
     assert response.status_code==303,response.text
     return int(response.headers['location'].split('/')[-1])
 
-def upload(client,id,data,name='photo.png'):
+def upload(client,id,data,name='photo.png',captured_at=None):
     token=csrf(client)
-    response=client.post('/api/media/reserve',json=dict(parent_kind='observation',parent_id=id,original_name=name,size=len(data),upload_key=str(uuid.uuid4())),headers={'Origin':'http://localhost:8000','X-CSRF-Token':token})
+    response=client.post('/api/media/reserve',json=dict(parent_kind='observation',parent_id=id,original_name=name,size=len(data),captured_at=captured_at,upload_key=str(uuid.uuid4())),headers={'Origin':'http://localhost:8000','X-CSRF-Token':token})
     assert response.status_code==200,response.text
     mid=response.json()['id']
     result=client.put(f'/api/media/{mid}',content=data,headers={'Origin':'http://localhost:8000','X-CSRF-Token':token,'Content-Type':'application/octet-stream'})
@@ -156,9 +156,19 @@ def test_export_and_all_delete(client):
 
 def test_generated_hevc(client,tmp_path):
     file=tmp_path/'sample.mp4'
-    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=128x96:r=120','-t','0.2','-c:v','libx265','-x265-params','pools=1:log-level=error','-tag:v','hvc1',str(file)],check=True,capture_output=True)
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=128x96:r=120','-t','0.2','-c:v','libx265','-x265-params','pools=1:log-level=error','-tag:v','hvc1','-metadata','creation_time=2026-01-02T03:04:05Z',str(file)],check=True,capture_output=True)
     id=observation(client);mid,response=upload(client,id,file.read_bytes(),'sample.mp4')
     assert response.status_code==200,response.text
+    with transaction() as db:
+        row=db.get(Media,mid)
+        assert row.captured_at.isoformat() == '2026-01-02T03:04:05+00:00'
+        assert row.captured_at_source == 'metadata'
+    manual,response=upload(client,id,file.read_bytes(),'manual.mp4','2026-01-03T12:34')
+    assert response.status_code == 200
+    with transaction() as db:
+        row=db.get(Media,manual)
+        assert row.captured_at.isoformat() == '2026-01-03T03:34:00+00:00'
+        assert row.captured_at_source == 'user'
     result=client.get(f'/media/{mid}',headers={'Range':'bytes=0-99'})
     assert result.status_code==206 and len(result.content)==100
 
@@ -231,3 +241,45 @@ def test_iphone_alternate_audio(tmp_path, monkeypatch, variant, accepted):
         with pytest.raises(HTTPException) as error:
             inspect_file(tmp_path/'video', 'iphone.MOV')
         assert error.value.status_code == 415
+
+
+@pytest.mark.parametrize('tags,expected', [
+    ({'com.apple.quicktime.creationdate':'2026-01-02T12:34:56+0900', 'creation_time':'2026-01-02T03:35:00Z'}, '2026-01-02T03:34:56+00:00'),
+    ({'creation_time':'2026-01-02T03:34:56Z'}, '2026-01-02T03:34:56+00:00'),
+    ({'creation_time':'2026-01-02T12:34:56'}, None),
+    ({'creation_time':'1904-01-01T00:00:00Z'}, None),
+    ({'creation_time':'9999-01-01T00:00:00Z'}, None),
+    ({'creation_time':'invalid'}, None), ({}, None),
+])
+def test_capture_metadata(tmp_path,monkeypatch,tags,expected):
+    from app.media_metadata import video_capture_time
+    result=subprocess.CompletedProcess([],0,stdout=json.dumps({'format':{'tags':tags}}))
+    monkeypatch.setattr(subprocess,'run',lambda *a,**kw:result)
+    value=video_capture_time(tmp_path/'video','sample.MOV')
+    assert (value.isoformat() if value else None)==expected
+
+
+def test_capture_metadata_failure(tmp_path,monkeypatch):
+    from app.media_metadata import video_capture_time
+    def timeout(*args,**kwargs): raise subprocess.TimeoutExpired('ffprobe',15)
+    monkeypatch.setattr(subprocess,'run',timeout)
+    assert video_capture_time(tmp_path/'video','sample.mov') is None
+
+
+def test_capture_time_edit_security(client):
+    id=observation(client);mid,result=upload(client,id,png())
+    assert result.status_code==200
+    url=f'/media/{mid}/captured-at'
+    assert client.post(url,data={'captured_at':'2026-01-01T12:00'},headers={'Origin':'http://localhost:8000'}).status_code==403
+    assert post(client,url,{'captured_at':'invalid'}).status_code==422
+    assert post(client,url,{'captured_at':'2026-01-01T12:00','status':'ready'}).status_code==422
+    assert post(client,url,{'captured_at':'2026-01-01T12:00'}).status_code==303
+    with transaction() as db:
+        row=db.get(Media,mid)
+        assert row.captured_at.hour==3 and row.captured_at_source=='user'
+        assert db.get(Observation,id).occurred_at.hour==3
+    assert post(client,url,{'captured_at':''}).status_code==303
+    with transaction() as db:
+        row=db.get(Media,mid);assert row.captured_at is None and row.captured_at_source=='unknown'
+    assert post(client,f'/media/{mid}/delete',{}).status_code==303
+    assert post(client,url,{'captured_at':'2026-01-01T12:00'}).status_code==409

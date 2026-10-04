@@ -17,6 +17,7 @@ from .config import settings
 from .db import transaction, engine
 from .models import Cat, Media, Observation, Health, DictionaryItem, now
 from .services import parent
+from .media_metadata import video_capture_time
 
 Image.MAX_IMAGE_PIXELS = 30_000_000
 
@@ -139,6 +140,11 @@ class Upload:
         os.fsync(self.file.fileno())
         self.file.close()
         mime = inspect_file(self.temp, self.row.original_name)
+        if self.row.captured_at is None:
+            captured = video_capture_time(self.temp, self.row.original_name)
+            if captured is not None:
+                self.row.captured_at = captured
+                self.row.captured_at_source = 'metadata'
         os.replace(self.temp, self.final)
         self.row.mime_type, self.row.bytes = mime, self.size
         self.row.status = 'ready'
