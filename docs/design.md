@@ -1,5 +1,9 @@
 # プロジェクト・メメ：初版の設計
 
+## 実装状況
+
+初版のローカル実装を追加した。起動方法と検証結果はREADME.md、処理の説明はdocs/learning.mdを参照。実際のiPhone動画の確認は未完了。
+
 ## 目的と範囲
 
 メメの声と行動を観察し、一つずつ意味や合図を確かめ、意思疎通の手がかりを育てる。『プロジェクト・ヘイル・メアリー』の、異なる相手との観察と試行による意思疎通が着想。名称はプロジェクト・アプリともに「プロジェクト・メメ」、リポジトリは`project-meme`とする。
@@ -20,7 +24,7 @@ Python、HTTPとAPI、SQL、RDB設計、Dockerを学ぶことも目的とする�
 
 利用者の想定はiPhone 17 Pro Max（将来の機種変更も想定）で4K・120fps、通常10秒、長くても30秒程度の動画。iCloudは使わずAirDropでMacBookへ渡す。機種名で受け入れを固定せず、実ファイルのコンテナ・コーデック・容量で判定する。将来の機種の仕様や互換性は未確認。
 
-初期の検証対象は通常撮影のHEVC動画（MOV／MP4）。ProRes・ProRes RAWは容量と再生要件が異なるため初版の対応を約束せず、使用が分かった時点で再検討する。4K・120fps・30秒だけでは容量は確定せず、HDRや撮影・転送形式によっても変わる。実際にAirDropしたファイルで容量・音声・向き・ブラウザ再生を確認する。撮影フレームレートとスロー再生時間は区別し、30秒を機械的な再生時間上限にはしない。
+初期の検証対象は通常撮影のHEVC動画（MOV／MP4）。利用者はProResを使用しないと確認済み。初版はHEVC/H.264のMOV・MP4を許可し、ProRes・ProRes RAWを拒否する。4K・120fps・30秒だけでは容量は確定せず、HDRや撮影・転送形式によっても変わる。実際にAirDropしたファイルで容量・音声・向き・ブラウザ再生を確認する。撮影フレームレートとスロー再生時間は区別し、30秒を機械的な再生時間上限にはしない。
 
 初期値案は1ファイル1GB（1,000,000,000 bytes）、アプリ管理メディア合計30GB（30,000,000,000 bytes）。これは余裕を見た暫定案で、必要量の実測や利用者による数値の確定はまだ。環境変数で変更可能にし、実動画とMacBookの空き容量を確認して採用値を決める。容量制限は画質・長さでなく実バイト数で適用する。
 
@@ -38,7 +42,7 @@ Python、HTTPとAPI、SQL、RDB設計、Dockerを学ぶことも目的とする�
 
 写真アプリのライブラリへ登録する必要はない。AirDropで受け取ったファイルをinboxへ置き、ブラウザのファイル選択から取り込む。アプリはmediaへコピーして管理し、inboxやiPhoneの原本を移動・削除しない。同じ動画のコピーが増えるため、inboxとバックアップは合計30GBのアプリ上限とは別にディスクを使う。60日期限はmediaの管理コピーだけに適用する。原本を整理する判断は利用者が行う。
 
-Dockerにはmedia・stagingだけを必要な権限でbind mountする。inboxやホーム全体、写真ライブラリはマウントしない。DBはDockerのnamed volumeで永続化し、DBファイルを直接編集しない。バックアップは専用の手動処理で出力先を接続する。同じMacBook内のコピーは誤削除への備えにはなるが本体故障の対策にはならず、外部バックアップ先と保持期間は別途決める。これらのフォルダはまだ作成していない。
+Dockerにはmediaをbind mountし、その配下のstagingを一時保存に使う。inboxやホーム全体、写真ライブラリはマウントしない。DBはDockerのnamed volumeで永続化し、DBファイルを直接編集しない。バックアップは専用の手動処理で出力先を接続する。同じMacBook内のコピーは誤削除への備えにはなるが本体故障の対策にはならず、外部バックアップ先と保持期間は別途決める。scripts/setup.pyが保存フォルダと.envを作成する。
 
 ## GitHubと将来のOSS公開
 
@@ -96,14 +100,14 @@ HTTPルート、入力モデル、保存処理、添付処理、期限・CSV処�
 | テーブル | 主な項目 | 分ける理由 |
 |---|---|---|
 | cats | id, name, birthday?, notes | 名前やプロフィールを記録ごとに重複させない |
-| observations | id, cat_id, occurred_at, timezone, location?, description, submission_key, deletion_requested_at? | 日時・状況・観察事実の中心。仮説と事実を分ける |
+| observations | id, cat_id, occurred_at, timezone, location?, description, submission_key, submission_hash, deletion_requested_at? | 日時・状況・観察事実の中心。仮説と事実を分ける |
 | situation_tags | id, name（重複不可） | タグ名を統一し、表記ゆれを防ぐ |
 | observation_tags | observation_id, tag_id | 一つの観察に複数タグ、一つのタグに複数観察を関連づける |
 | observation_comments | id, observation_id, body | 後からの追記を複数残し、元の観察との違いを示す |
 | interactions | id, observation_id, acted_at?, owner_action, cue_item_id?, cat_response?, responded_at? | 一つの場面で複数回の働きかけがあり、反応は後から記録できる |
 | dictionary_items | id, cat_id, kind, title, hypothesis?, cue?, notes | 継続して検討する仮説・合図を、個々の出来事から分ける |
 | dictionary_evidence | dictionary_item_id, observation_id, assessment, rationale? | 仮説と観察の多対多。支持・不一致・未判断は観察ごとに異なる |
-| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, submission_key, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
+| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, submission_key, submission_hash, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
 | media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type?, bytes?, reserved_bytes, upload_key, captured_at?, captured_at_source, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count, next_retry_at?, last_error_code? | 複数添付と、本文とは独立した容量・期限・削除を管理する |
 
 `?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにし、評価の変更を追えるようdictionary_evidenceにもcreated_at・updated_atを持たせる。初版は完全な編集履歴を保存せず、重要な新しい解釈は元の仮説を上書きせず別項目として登録する。IDは認可の代用にしない。
@@ -154,7 +158,7 @@ cat_idとoccurred_atの複合インデックスを観察・体調へ設ける。
 ファイルとDBは同じトランザクションで更新できない。media.statusはpending・ready・failed・delete_pending・deletedを基本にする。初版は記録本文の保存後に添付を一件ずつ送る二段階方式とする。添付失敗時は本文を残し、「本文保存済み・添付失敗」と表示して添付だけ再試行できる。
 
 1. 親が削除中でないことを確認し、アップロード開始要求でmedia行と容量予約を作る。単一飼い主のcats行をロックし、上限検証とreserved_bytesの予約を短いトランザクションで行う。申告サイズを上限として検証し、超過は拒否する。予約前にはファイル本文を受信しない。
-2. 予約IDに対して一ファイルを送信する。multipart解析前に予約の有効性を確認してpending行の排他ロックを取得し、受信から保存完了まで保持する。初版の小規模構成では接続を保持する方式とし、受信時間上限で長時間占有を防ぐ。重複送信は待たせず拒否する。multipart解析前のASGI受信処理でリクエスト全体のバイト数と時間を制限する。Content-Lengthだけを信用せず、ファイル数・フォーム数も制限する。UploadFileで受信し終わってからの検査だけを容量防御としない。
+2. 予約IDに対して一ファイルを送信する。ファイル本文の受信前に予約の有効性を確認してpending行の排他ロックを取得し、受信から保存完了まで保持する。初版の小規模構成では接続を保持する方式とし、受信時間上限で長時間占有を防ぐ。重複送信は待たせず拒否する。ファイル本体はPUTのraw streamで受信し、ASGI受信処理でバイト数と時間を制限する。Content-Lengthだけを信用しない。通常フォームはmultipartライブラリで解析し、ファイル混入と項目数を制限する。
 3. 一時保存の容量も見込み、作業用領域に制限と空き容量の余裕を設ける。ファイルを上限付きで読み、内容を検証してmedia.bytesへ実サイズを記録する。
 4. 一時ファイルから同一ファイルシステム内の生成した保存キーへ移し、最後にreadyへ更新する。ready・親が有効・期限内（またはkeep）の条件をすべて満たす添付だけを配信する。
 
@@ -186,7 +190,7 @@ iPhoneの原本を整理する前にMacBookへの保存と再生を確認し、�
 
 ## セキュリティ
 
-ユーザー指定の共通セキュリティ方針を適用する。Dockerのホスト側ポートを127.0.0.1へ限定し、許可Hostと状態変更の送信元を検証する。CORSは必要がなければ有効にしない。localhost限定だけで防御が完成するとは扱わない。入力の型・長さ・範囲・個数をサーバーで検証し、SQLはパラメータ化する。HTMLをエスケープし、状態変更はGETで行わずCSRFトークンを検証する。トークンを標準的な方法で生成し、CookieのSameSiteだけに頼らない。
+2026-10-02指定の共通セキュリティ方針を適用する。[Webアプリケーションセキュリティ入門](https://bogus.jp/webapp_security_review.pdf)は参考資料であり、教材の構成・コード・固定バージョンをそのまま採用しない。Dockerのホスト側ポートを127.0.0.1へ限定し、許可Hostと状態変更の送信元を検証する。CORSは必要がなければ有効にしない。localhost限定だけで防御が完成するとは扱わない。入力の型・長さ・範囲・個数をサーバーで検証し、SQLはパラメータ化する。HTMLをエスケープし、状態変更はGETで行わずCSRFトークンを検証する。トークンを標準的な方法で生成し、CookieのSameSiteだけに頼らない。
 
 添付は形式・内容・サイズ・保存パスを検証し、拡張子や利用者指定のContent-Typeだけを信用しない。1ファイル・合計・添付数・受信時間に上限を設ける。ファイル名を保存先として信用しない。アプリ経由で配信し、LAN利用時には所有者の認可を毎回確認する。ログイン・セッション保護を実装する前にLANへ公開しない。
 
@@ -229,4 +233,13 @@ DB・メディア・秘密はGitに含めない。認証情報は環境変数等
 - バックアップ先、保持期間、復元手順。
 - pgvector段階のモデル、実行場所、送信条件。
 
-現時点では設計のみで、Docker・アプリ・DBは未実装。具体的なライブラリバージョンや安全な設定は実装時に現行の公式資料で確認する。
+Docker・アプリ・DBを実装し、依存をrequirements.lockへ固定した。生成HEVC動画の取り込みとMacBookのChrome操作、別Docker環境への復元を確認した。iPhone由来4K・120fps/HDR・向き・音声と長期運用は未確認。
+
+## 実装時の具体化
+
+- 小規模な初版は通常処理に共有保守ロック、ジョブと出力に排他保守ロックを使用する。競合時は409で再試行を案内する。
+- 検索は観察本文・体調メモが対象。体調CSV・印刷には日付条件だけを適用する。
+- 画像はJPEG・PNG、動画はHEVC/H.264を検証して許可。HEICは初版未対応。変換は行わない。
+- 保存期間は環境変数で設定し、新規添付へ適用する。画面には設定値と期限を表示する。
+- CSRFは12時間有効の署名Cookie内のランダムトークンを照合し、Origin検証と併用する。Secure CookieはLANのHTTPS化とともに追加する。
+- 全削除はDBの削除要求とメディア領域のマーカーで再開可能にし、新規書き込みを止める。

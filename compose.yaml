@@ -1,0 +1,52 @@
+name: project-meme
+x-app: &app
+  build: .
+  image: project-meme:local
+  environment: &env
+    DATABASE_URL: postgresql+psycopg://meme_app:${APP_DB_PASSWORD:?Run scripts/setup.py}@db:5432/meme
+    SECRET_KEY: ${SECRET_KEY:?Run scripts/setup.py}
+    MEDIA_ROOT: /media
+    MAX_FILE_BYTES: ${MAX_FILE_BYTES:-1000000000}
+    MAX_TOTAL_BYTES: ${MAX_TOTAL_BYTES:-30000000000}
+    RETENTION_DAYS: ${RETENTION_DAYS:-60}
+    BASE_URL: http://localhost:${PORT:-8000}
+  volumes:
+    - ${MEDIA_DIR:?Run scripts/setup.py}:/media
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+services:
+  db:
+    image: postgres:18-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
+    environment:
+      POSTGRES_DB: meme
+      POSTGRES_USER: meme_owner
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run scripts/setup.py}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run scripts/setup.py}
+    volumes:
+      - postgres:/var/lib/postgresql
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U meme_owner -d meme']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate:
+    <<: *app
+    environment:
+      <<: *env
+      DATABASE_URL: postgresql+psycopg://meme_owner:${DB_PASSWORD}@db:5432/meme
+    command: [alembic, upgrade, head]
+    depends_on:
+      db: {condition: service_healthy}
+  web:
+    <<: *app
+    ports: ['127.0.0.1:${PORT:-8000}:8000']
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres:

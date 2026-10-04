@@ -1,0 +1,205 @@
+import io
+import json
+import re
+import subprocess
+import uuid
+from datetime import timedelta
+from pathlib import Path
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from PIL import Image
+from sqlalchemy import select, delete, text
+from sqlalchemy.exc import IntegrityError
+from app.main import app
+from app.config import settings
+from app.db import transaction
+from app.models import Base, Tag, Observation, Health, Media, DictionaryItem, Interaction, Evidence, now
+from app.media import run_jobs, paths
+from app.schemas import HealthInput
+
+@pytest.fixture
+def client():
+    settings.media_root.mkdir(parents=True, exist_ok=True)
+    (settings.media_root/'staging').mkdir(exist_ok=True)
+    (settings.media_root/'deleting-all').unlink(missing_ok=True)
+    with transaction(exclusive=True) as db:
+        for table in reversed(Base.metadata.sorted_tables): db.execute(delete(table))
+    for path in settings.media_root.rglob('*'):
+        if path.is_file(): path.unlink()
+    with TestClient(app, base_url='http://localhost:8000') as c:
+        c.get('/')
+        yield c
+
+def csrf(client):
+    return re.search(r'name="csrf-token" content="([^"]+)"',client.get('/').text)[1]
+
+def post(client,url,data):
+    return client.post(url,data={'csrf':csrf(client),**data},headers={'Origin':'http://localhost:8000'},follow_redirects=False)
+
+def observation(client,description='食事前に鳴いた',key=None):
+    with transaction() as db: tag_id=db.scalar(select(Tag.id).limit(1))
+    response=post(client,'/entries/observation/save',dict(occurred_at='2026-10-04T12:00',description=description,location='台所',submission_key=key or str(uuid.uuid4()),tags=[str(tag_id)]))
+    assert response.status_code==303,response.text
+    return int(response.headers['location'].split('/')[-1])
+
+def upload(client,id,data,name='photo.png'):
+    token=csrf(client)
+    response=client.post('/api/media/reserve',json=dict(parent_kind='observation',parent_id=id,original_name=name,size=len(data),upload_key=str(uuid.uuid4())),headers={'Origin':'http://localhost:8000','X-CSRF-Token':token})
+    assert response.status_code==200,response.text
+    mid=response.json()['id']
+    result=client.put(f'/api/media/{mid}',content=data,headers={'Origin':'http://localhost:8000','X-CSRF-Token':token,'Content-Type':'application/octet-stream'})
+    return mid,result
+
+def png():
+    buffer=io.BytesIO(); Image.new('RGB',(20,20),(100,150,90)).save(buffer,format='PNG'); return buffer.getvalue()
+
+def test_pages_and_security(client):
+    for path in ['/','/observations','/health','/dictionary','/storage','/entries/observation/new','/entries/health/new','/health/print']:
+        response=client.get(path); assert response.status_code==200,(path,response.text)
+        assert 'frame-ancestors' in response.headers['content-security-policy']
+    assert client.get('/',headers={'Host':'evil.example'}).status_code==400
+    assert client.post('/profile',data={'name':'bad'},headers={'Origin':'http://localhost:8000'}).status_code==403
+    assert client.post('/profile',data={'csrf':csrf(client),'name':'bad'},headers={'Origin':'https://evil.example'}).status_code==403
+    assert client.post('/profile',data={'csrf':csrf(client),'name':'bad'}).status_code==403
+    assert client.post('/api/media/reserve',json={},headers={'Origin':'http://localhost:8000'}).status_code==403
+
+def test_observation_roundtrip_and_idempotency(client):
+    key=str(uuid.uuid4()); id=observation(client,'<script>alert(1)</script>',key)
+    assert observation(client,'<script>alert(1)</script>',key)==id
+    text=client.get(f'/entries/observation/{id}').text
+    assert '&lt;script&gt;' in text and '<script>alert' not in text
+    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T13:00',description='更新',location='',submission_key=str(uuid.uuid4()))).status_code==303
+    assert '更新' in client.get(f'/entries/observation/{id}').text
+    assert post(client,f'/observations/{id}/comment',{'body':'撮影前の様子'}).status_code==303
+    assert '撮影前の様子' in client.get(f'/entries/observation/{id}').text
+    assert post(client,'/entries/observation/save',dict(occurred_at='2026-10-04T12:00',description='違う入力',submission_key=key)).status_code==409
+
+def test_dictionary_and_later_response(client):
+    id=observation(client)
+    result=post(client,'/dictionary/save',dict(kind='hypothesis',title='ごはん要求かも',content='食事を求めている',notes='仮説'))
+    did=int(result.headers['location'].split('/')[-1])
+    assert post(client,f'/observations/{id}/evidence',dict(dictionary_item_id=did,assessment='supports',rationale='食べた')).status_code==303
+    cue=post(client,'/dictionary/save',dict(kind='cue',title='遊ぼう',content='遊ぼうと声をかける',notes=''))
+    cid=int(cue.headers['location'].split('/')[-1])
+    assert post(client,f'/observations/{id}/interaction',dict(owner_action='声をかけた',cue_item_id=cid)).status_code==303
+    with transaction() as db: iid=db.scalar(select(Interaction.id))
+    assert post(client,f'/observations/{id}/interaction',dict(id=iid,owner_action='声をかけた',cue_item_id=cid,cat_response='近づいた')).status_code==303
+    assert '近づいた' in client.get(f'/dictionary/{cid}').text
+    assert post(client,f'/observations/{id}/evidence',dict(dictionary_item_id=cid,assessment='supports')).status_code==422
+    assert post(client,f'/dictionary/{cid}/delete',dict(confirm='削除')).status_code==303
+    with transaction() as db:
+        assert db.get(Interaction,iid).cue_item_id is None
+        assert db.get(Interaction,iid).cat_response=='近づいた'
+
+def test_health_csv_and_invalid_input(client):
+    values=dict(occurred_at='2026-10-04T12:00',event_type='weight',weight_value='4.250',weight_unit='kg',details='=HYPERLINK("bad")\n二行目',submission_key=str(uuid.uuid4()))
+    assert post(client,'/entries/health/save',values).status_code==303
+    response=client.get('/health.csv?start=2026-10-04&end=2026-10-04')
+    assert response.status_code==200 and "'=HYPERLINK" in response.text
+    assert '4.250' in response.text
+    assert '=HYPERLINK' not in client.get('/health.csv?start=2026-10-05').text
+    values['weight_value']='-1';values['submission_key']=str(uuid.uuid4())
+    response=post(client,'/entries/health/save',values)
+    assert response.status_code==422 and 'まだ保存されていません' in response.text
+    with transaction() as db:
+        row=db.scalar(select(Health)); assert row.occurred_at.hour==3
+    with pytest.raises(IntegrityError):
+        with transaction() as db:
+            db.execute(text("UPDATE health_entries SET weight_value=-1"))
+
+def test_file_validation_expiry_and_keep(client):
+    id=observation(client)
+    mid,response=upload(client,id,png())
+    assert response.status_code==200,response.text
+    assert client.get(f'/media/{mid}').status_code==200
+    with transaction() as db:
+        row=db.get(Media,mid); assert timedelta(days=59)<row.expires_at-row.retention_started_at<timedelta(days=61)
+        original_expiry=row.expires_at
+    assert post(client,f'/media/{mid}/keep',{}).status_code==303
+    run_jobs(original_expiry+timedelta(days=1))
+    assert client.get(f'/media/{mid}').status_code==200
+    assert post(client,f'/media/{mid}/keep',{}).status_code==303
+    run_jobs(original_expiry+timedelta(days=1))
+    assert client.get(f'/media/{mid}').status_code==404
+    with transaction() as db:
+        row=db.get(Media,mid); assert row.status=='deleted' and row.reserved_bytes==0
+        assert db.get(Observation,id)
+    bad,result=upload(client,id,b'<html><script>bad</script></html>','bad.mp4')
+    assert result.status_code==415
+    run_jobs()
+    with transaction() as db: assert db.get(Media,bad).status=='failed'
+
+def test_quota_path_and_parent_deletion(client,monkeypatch):
+    id=observation(client)
+    token=csrf(client); headers={'Origin':'http://localhost:8000','X-CSRF-Token':token}
+    payload=dict(parent_kind='observation',parent_id=id,original_name='../bad.mp4',size=10,upload_key=str(uuid.uuid4()))
+    assert client.post('/api/media/reserve',json=payload,headers=headers).status_code==422
+    payload['original_name']='test.mp4';payload['size']=settings.max_file_bytes+1
+    assert client.post('/api/media/reserve',json=payload,headers=headers).status_code==413
+    mid,result=upload(client,id,png());assert result.status_code==200
+    assert post(client,f'/entries/observation/{id}/delete',{'confirm':'削除'}).status_code==303
+    assert client.get(f'/entries/observation/{id}').status_code==404
+    with transaction() as db: assert db.get(Media,mid) is None
+
+def test_export_and_all_delete(client):
+    import zipfile
+    id=observation(client); mid,response=upload(client,id,png()); assert response.status_code==200
+    response=post(client,'/export',{'confirm':'出力'}); assert response.status_code==200,response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        data=json.loads(archive.read('records.json')); assert data['format_version']==1
+        assert len(data['tables']['observations'])==1
+        assert len([n for n in archive.namelist() if n.startswith('media/')])==1
+    assert post(client,'/delete-all',{'confirm':'メメの全記録を削除'}).status_code==303
+    assert not (settings.media_root/'deleting-all').exists()
+    with transaction() as db: assert db.scalar(select(Observation)) is None
+
+def test_generated_hevc(client,tmp_path):
+    file=tmp_path/'sample.mp4'
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=128x96:r=120','-t','0.2','-c:v','libx265','-x265-params','pools=1:log-level=error','-tag:v','hvc1',str(file)],check=True,capture_output=True)
+    id=observation(client);mid,response=upload(client,id,file.read_bytes(),'sample.mp4')
+    assert response.status_code==200,response.text
+    result=client.get(f'/media/{mid}',headers={'Range':'bytes=0-99'})
+    assert result.status_code==206 and len(result.content)==100
+
+def test_delete_failure_retry_and_stale_upload(client, monkeypatch):
+    id=observation(client);mid,result=upload(client,id,png());assert result.status_code==200
+    assert post(client,f'/media/{mid}/delete',{}).status_code==303
+    real_unlink=Path.unlink
+    def fail(path,*args,**kwargs):
+        if path.parent==settings.media_root: raise PermissionError('simulated')
+        return real_unlink(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'unlink',fail)
+    run_jobs()
+    with transaction() as db:
+        row=db.get(Media,mid);assert row.status=='delete_pending' and row.retry_count==1 and row.reserved_bytes>0
+        retry=row.next_retry_at
+    monkeypatch.setattr(Path,'unlink',real_unlink)
+    run_jobs(retry+timedelta(seconds=1))
+    with transaction() as db: assert db.get(Media,mid).status=='deleted'
+    token=csrf(client)
+    response=client.post('/api/media/reserve',json=dict(parent_kind='observation',parent_id=id,original_name='missing.mp4',size=100,upload_key=str(uuid.uuid4())),headers={'Origin':'http://localhost:8000','X-CSRF-Token':token})
+    assert response.status_code==200
+    missing=response.json()['id']
+    run_jobs(now()+timedelta(minutes=16))
+    with transaction() as db: assert db.get(Media,missing).reserved_bytes==0
+
+def test_backup_lock_and_body_limit(client):
+    from app.db import transaction
+    with transaction(exclusive=True):
+        response=post_without_get(client,'/profile',dict(name='変更',notes=''))
+        assert response.status_code==409
+    token=csrf(client)
+    result=client.post('/profile',content=('csrf='+token+'&name='+('a'*70000)),headers={'Origin':'http://localhost:8000','Content-Type':'application/x-www-form-urlencoded'})
+    assert result.status_code in {400,413}
+
+def post_without_get(client,url,data):
+    from app.security import read_token, COOKIE
+    token=read_token(client.cookies.get(COOKIE))
+    return client.post(url,data={'csrf':token,**data},headers={'Origin':'http://localhost:8000'},follow_redirects=False)
+
+
+def test_application_role_cannot_create_tables(client):
+    from sqlalchemy.exc import ProgrammingError
+    with pytest.raises(ProgrammingError):
+        with transaction() as db: db.execute(text('CREATE TABLE forbidden_table (id int)'))

@@ -1,0 +1,16 @@
+services:
+  migrate:
+    volumes: !override []
+    environment:
+      MEDIA_ROOT: /tmp/meme-test-media
+  tests:
+    image: project-meme:local
+    command: [python, -m, pytest, -q, -p, no:cacheprovider, tests]
+    environment:
+      DATABASE_URL: postgresql+psycopg://meme_app:${APP_DB_PASSWORD}@db:5432/meme
+      SECRET_KEY: ${SECRET_KEY}
+      MEDIA_ROOT: /tmp/meme-test-media
+      BASE_URL: http://localhost:8000
+      JOB_INTERVAL: '3600'
+    depends_on:
+      migrate: {condition: service_completed_successfully}

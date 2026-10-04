@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=app_password="$APP_DB_PASSWORD" <<'SQL'
+CREATE ROLE meme_app LOGIN PASSWORD :'app_password';
+GRANT CONNECT ON DATABASE meme TO meme_app;
+GRANT USAGE ON SCHEMA public TO meme_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE meme_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO meme_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE meme_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO meme_app;
+SQL
