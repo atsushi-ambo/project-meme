@@ -36,7 +36,10 @@ def reserve(db, data):
     existing = db.scalar(select(Media).where(Media.upload_key == str(data.upload_key)))
     if existing:
         target = existing.observation_id if data.parent_kind == 'observation' else existing.health_entry_id
-        if target != entry.id or existing.original_name != data.original_name or existing.reserved_bytes != data.size:
+        if target != entry.id or existing.original_name != data.original_name:
+            raise HTTPException(409, '同じ添付送信の内容が異なります。')
+        # 終了後の予約容量は0。元サイズとの比較で再試行の状態取得を拒否しない。
+        if existing.status in {'pending', 'ready'} and existing.reserved_bytes != data.size:
             raise HTTPException(409, '同じ添付送信の内容が異なります。')
         return existing
     if data.size > settings.max_file_bytes or used_bytes(db) + data.size > settings.max_total_bytes:
@@ -121,6 +124,9 @@ class Upload:
             parent(self.db, kind, self.row.observation_id or self.row.health_entry_id)
             self.final, self.temp = paths(self.row.storage_key)
             self.temp.parent.mkdir(parents=True, exist_ok=True)
+            # 行ロック取得後なので別の受信処理は動いていない。
+            # プロセス停止で残ったこの予約の途中ファイルだけを捨て、先頭から受信する。
+            self.temp.unlink(missing_ok=True)
             self.file = self.temp.open('xb')
             self.size = 0
         except BaseException as exc:

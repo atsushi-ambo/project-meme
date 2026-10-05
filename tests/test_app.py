@@ -405,3 +405,58 @@ def test_search_in_legacy_comment_escapes_wildcards(client):
     assert response.status_code==200
     assert f'href="/entries/observation/{first}"' in response.text
     assert f'href="/entries/observation/{second}"' not in response.text
+
+
+
+@pytest.mark.parametrize('state', ['failed', 'deleted'])
+def test_retry_reservation_after_cleanup(client, state):
+    id=observation(client)
+    headers={'Origin':'http://localhost:8000','X-CSRF-Token':csrf(client)}
+    data=dict(parent_kind='observation',parent_id=id,original_name='retry.png',size=len(png()),upload_key=str(uuid.uuid4()))
+    first=client.post('/api/media/reserve',json=data,headers=headers)
+    mid=first.json()['id']
+    if state=='deleted':
+        assert client.put(f'/api/media/{mid}',content=png(),headers=headers).status_code==200
+        assert post(client,f'/media/{mid}/delete',{}).status_code==303
+        run_jobs()
+    else:
+        run_jobs(now()+timedelta(minutes=16))
+    retry=client.post('/api/media/reserve',json=data,headers=headers)
+    assert retry.status_code==200 and retry.json()['status']==state
+    assert client.post('/api/media/reserve',json={**data,'original_name':'other.png'},headers=headers).status_code==409
+    fresh=client.post('/api/media/reserve',json={**data,'upload_key':str(uuid.uuid4())},headers=headers)
+    assert fresh.status_code==200 and fresh.json()['status']=='pending'
+    assert client.put('/api/media/'+str(fresh.json()['id']),content=png(),headers=headers).status_code==200
+
+
+def test_resume_interrupted_upload_and_reject_concurrent_upload(client):
+    id=observation(client)
+    headers={'Origin':'http://localhost:8000','X-CSRF-Token':csrf(client)}
+    data=dict(parent_kind='observation',parent_id=id,original_name='retry.png',size=len(png()),upload_key=str(uuid.uuid4()))
+    response=client.post('/api/media/reserve',json=data,headers=headers)
+    mid=response.json()['id']
+    assert client.post('/api/media/reserve',json={**data,'size':len(png())+1},headers=headers).status_code==409
+    with transaction() as db:
+        row=db.get(Media,mid,with_for_update=True)
+        final,temp=paths(row.storage_key)
+        temp.parent.mkdir(exist_ok=True)
+        temp.write_bytes(b'partial')
+        assert client.put(f'/api/media/{mid}',content=png(),headers=headers).status_code==409
+        assert temp.read_bytes()==b'partial'
+    assert client.put(f'/api/media/{mid}',content=png(),headers=headers).status_code==200
+    assert final.read_bytes()==png() and not temp.exists()
+    repeated=client.post('/api/media/reserve',json=data,headers=headers)
+    assert repeated.json()=={'id':mid,'status':'ready'}
+
+
+def test_api_rejections_are_readable_json(client):
+    response=client.put('/api/profile-photo',content=png(),headers={'Origin':'http://localhost:8000'})
+    assert response.status_code==403
+    assert response.json()['detail']=='送信を確認できません。'
+    marker=settings.media_root/'deleting-all'
+    marker.write_text('pending')
+    try:
+        response=client.post('/api/media/reserve',json={},headers={'Origin':'http://localhost:8000','X-CSRF-Token':csrf(client)})
+        assert response.status_code==409 and '全削除の処理中' in response.json()['detail']
+    finally:
+        marker.unlink(missing_ok=True)

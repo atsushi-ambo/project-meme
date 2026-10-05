@@ -4,7 +4,7 @@ import secrets
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, JSONResponse
 from .config import settings
 
 signer = URLSafeTimedSerializer(settings.secret_key, salt='meme-browser-csrf')
@@ -28,6 +28,10 @@ class SecurityMiddleware:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        def rejection(message, status):
+            if scope['path'].startswith('/api/'):
+                return JSONResponse({'detail': message}, status_code=status)
+            return PlainTextResponse(message, status)
         headers = dict(scope['headers'])
         host = headers.get(b'host', b'').decode('latin1')
         port = urlsplit(settings.base_url).port or 80
@@ -35,14 +39,14 @@ class SecurityMiddleware:
         if port == 80:
             allowed |= {'localhost', '127.0.0.1'}
         if host not in allowed:
-            return await PlainTextResponse('接続先が許可されていません。', 400)(scope, receive, send)
+            return await rejection('接続先が許可されていません。', 400)(scope, receive, send)
         mutation = scope['method'] not in ('GET','HEAD','OPTIONS')
         if mutation and (settings.media_root / 'deleting-all').exists():
-            return await PlainTextResponse('全削除の処理中です。完了までお待ちください。', 409)(scope, receive, send)
+            return await rejection('全削除の処理中です。完了までお待ちください。', 409)(scope, receive, send)
         if mutation:
             origin = headers.get(b'origin', b'').decode('latin1')
             if origin not in {f'http://{h}' for h in allowed}:
-                return await PlainTextResponse('送信元を確認できません。', 403)(scope, receive, send)
+                return await rejection('送信元を確認できません。', 403)(scope, receive, send)
         cookies = SimpleCookie()
         try:
             cookies.load(headers.get(b'cookie', b'').decode('latin1'))
@@ -52,14 +56,14 @@ class SecurityMiddleware:
         set_cookie = None
         if not token:
             if mutation:
-                return await PlainTextResponse('ページを開き直してください。', 403)(scope, receive, send)
+                return await rejection('ページを開き直してください。', 403)(scope, receive, send)
             token, set_cookie = new_cookie()
         scope.setdefault('state', {})['csrf'] = token
         upload = scope['path'].startswith('/api/media/') and scope['method'] == 'PUT'
         if upload or scope['path'].startswith('/api/'):
             supplied = headers.get(b'x-csrf-token', b'').decode('latin1')
             if mutation and not secrets.compare_digest(supplied, token):
-                return await PlainTextResponse('送信を確認できません。', 403)(scope, receive, send)
+                return await rejection('送信を確認できません。', 403)(scope, receive, send)
         maximum = 10_000_000 if scope['path']=='/api/profile-photo' and scope['method']=='PUT' else (settings.max_file_bytes if upload else 65536)
         seen = 0
         started = False
@@ -89,6 +93,6 @@ class SecurityMiddleware:
         except (TimeoutError, ValueError) as error:
             if not started:
                 status = 408 if isinstance(error, TimeoutError) else 413
-                await PlainTextResponse('送信時間または容量の上限を超えました。', status)(scope, receive, protected_send)
+                await rejection('送信時間または容量の上限を超えました。', status)(scope, receive, protected_send)
             else:
                 raise
