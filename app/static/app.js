@@ -72,6 +72,19 @@ for (const source of document.querySelectorAll('input[type="datetime-local"]')) 
 for (const form of document.querySelectorAll('form[data-confirm]')) {
   form.addEventListener('submit', event => { if (!confirm(form.dataset.confirm)) event.preventDefault(); });
 }
+// ミドルウェアや通信先がJSON以外を返しても、解析エラーをそのまま見せない。
+async function readApiResponse(response, fallback) {
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch (_) {}
+  if (!response.ok) {
+    const message = typeof data?.detail === 'string' ? data.detail :
+      (response.headers.get('Content-Type')?.includes('text/plain') ? text.slice(0, 300) : fallback);
+    throw new Error(message || fallback);
+  }
+  if (!data || typeof data !== 'object') throw new Error(fallback);
+  return data;
+}
 const panel = document.querySelector('#upload');
 if (panel) {
   const input = document.querySelector('#media-file');
@@ -80,6 +93,7 @@ if (panel) {
   let key = crypto.randomUUID();
   input.addEventListener('change', () => {
     key = crypto.randomUUID();
+    status.textContent = '';
     const file = input.files[0];
     document.querySelector('#file-info').textContent = file ? `${file.name} · ${(file.size / 1000000).toFixed(1)} MB` : '';
   });
@@ -87,15 +101,23 @@ if (panel) {
     const file = input.files[0];
     if (!file) { status.textContent = 'ファイルを選んでください。'; return; }
     if (!document.querySelector('#captured-at').validateDateTime()) return;
-    button.disabled = true;
+    const controls = [...panel.querySelectorAll('input,select,button')].map(el => [el, el.disabled]);
+    controls.forEach(([el]) => { el.disabled = true; });
+    const warnOnLeave = event => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warnOnLeave);
+    const reload = () => { window.removeEventListener('beforeunload', warnOnLeave); location.reload(); };
     const csrf = document.querySelector('meta[name="csrf-token"]').content;
     try {
       status.textContent = '容量を確認しています…';
-      const response = await fetch('/api/media/reserve', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({parent_kind:panel.dataset.kind,parent_id:Number(panel.dataset.id),original_name:file.name,size:file.size,upload_key:key,captured_at:document.querySelector('#captured-at').value || null})});
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || '予約に失敗しました。');
-      if (result.status === 'ready') { location.reload(); return; }
-      if (result.status !== 'pending') { key = crypto.randomUUID(); throw new Error('前回の取り込みは終了しています。もう一度保存を押してください。'); }
+      let result;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await fetch('/api/media/reserve', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({parent_kind:panel.dataset.kind,parent_id:Number(panel.dataset.id),original_name:file.name,size:file.size,upload_key:key,captured_at:document.querySelector('#captured-at').value || null})});
+        result = await readApiResponse(response, '容量の確認に失敗しました。もう一度保存を押してください。');
+        if (['pending', 'ready'].includes(result.status)) break;
+        key = crypto.randomUUID();
+      }
+      if (result.status === 'ready') { reload(); return; }
+      if (result.status !== 'pending') throw new Error('前回の取り込みを整理しています。少し待って再試行してください。');
       await new Promise((resolve,reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', `/api/media/${result.id}`);
@@ -103,15 +125,24 @@ if (panel) {
         xhr.setRequestHeader('X-CSRF-Token',csrf);
         xhr.timeout = 330000;
         xhr.upload.onprogress = e => { status.textContent = e.lengthComputable ? `送信中 ${Math.round(e.loaded/e.total*100)}% · 検証完了までお待ちください` : '送信中…'; };
-        xhr.onload = () => { if (xhr.status>=200 && xhr.status<300) resolve(); else { if ([413,415,422].includes(xhr.status)) key = crypto.randomUUID(); let message='添付を保存できませんでした。'; try { message=JSON.parse(xhr.responseText).detail || message; } catch (_) {} reject(new Error(message)); } };
-        xhr.onerror = () => reject(new Error('通信が切れました。本文は保存されています。'));
-        xhr.ontimeout = () => reject(new Error('送信時間を超えました。本文は保存されています。'));
+        xhr.onload = async () => {
+          if ([413,415,422].includes(xhr.status)) key = crypto.randomUUID();
+          try {
+            await readApiResponse(new Response(xhr.responseText, {status:xhr.status, headers:{'Content-Type':xhr.getResponseHeader('Content-Type') || ''}}), '添付を保存できませんでした。もう一度保存を押してください。');
+            resolve();
+          } catch (error) { reject(error); }
+        };
+        xhr.onerror = () => reject(new Error('通信が切れました。本文は保存されています。同じファイルで再試行できます。'));
+        xhr.ontimeout = () => reject(new Error('送信時間を超えました。本文は保存されています。同じファイルで再試行できます。'));
         xhr.send(file);
       });
       status.textContent = 'MacBookへの保存が完了しました。';
-      location.reload();
-    } catch (error) { status.textContent = error.message; }
-    finally { button.disabled = false; }
+      reload();
+    } catch (error) { status.textContent = error instanceof TypeError ? '通信を確認できませんでした。アプリの接続を確認して再試行してください。' : error.message; }
+    finally {
+      window.removeEventListener('beforeunload', warnOnLeave);
+      controls.forEach(([el, disabled]) => { el.disabled = disabled; });
+    }
   });
 }
 
@@ -128,8 +159,7 @@ if (photoButton) photoButton.addEventListener('click', async () => {
       'Content-Type':'application/octet-stream',
       'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content
     }, body:file});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || '保存できませんでした。');
+    await readApiResponse(response, '写真を保存できませんでした。再試行してください。');
     location.reload();
   } catch (error) { status.textContent = error.message; }
   finally { photoButton.disabled = false; }
