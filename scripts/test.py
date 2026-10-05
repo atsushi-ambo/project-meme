@@ -18,6 +18,21 @@ def main():
     result = 1
     try:
         result = run(compose + ['run', '--build', '--rm', '-T', 'tests'])
+        if result == 0:
+            # HTTPサーバー起動と実PostgreSQLへの接続も毎回検証する。
+            result = run(compose + ['up', '-d', '--no-deps', '--no-build',
+                                    '--wait', '--wait-timeout', '90', 'web'])
+        if result == 0:
+            # テストDB内だけで、本物のpg_dump/pg_restoreによる復元を検証する。
+            result = run(compose + ['exec', '-T', 'db', 'sh', '-ec', """
+                dump=$(mktemp)
+                trap 'rm -f "$dump"; dropdb -U meme_owner --if-exists meme_restore_test' EXIT
+                pg_dump -U meme_owner -d meme -Fc -f "$dump"
+                createdb -U meme_owner -O meme_owner meme_restore_test
+                pg_restore -U meme_owner -d meme_restore_test --exit-on-error --no-owner "$dump"
+                psql -U meme_owner -d meme_restore_test -v ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version'
+            """])
+
     except KeyboardInterrupt:
         result = 130
     finally:

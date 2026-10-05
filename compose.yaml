@@ -1,7 +1,7 @@
 name: project-meme
 x-app: &app
   build: .
-  image: project-meme:local
+  image: ${APP_IMAGE:-project-meme:local}
   environment: &env
     DATABASE_URL: postgresql+psycopg://meme_app:${APP_DB_PASSWORD:?Run scripts/setup.py}@db:5432/meme
     SECRET_KEY: ${SECRET_KEY:?Run scripts/setup.py}
@@ -44,7 +44,7 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/healthz', headers={'Host': urllib.parse.urlsplit(__import__('os').environ['BASE_URL']).netloc}), timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5

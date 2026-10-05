@@ -16,8 +16,12 @@ def run(args, **kw):
 def env_values():
     return dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines() if line and not line.startswith('#'))
 
-def backup(destination):
+def backup(destination, *, restart=True, runner=None):
+    run = runner or globals()["run"]
     values=env_values(); media=Path(values['MEDIA_DIR']).resolve()
+    destination = destination.resolve()
+    if destination.is_relative_to(media) or destination.is_relative_to(ROOT.resolve()):
+        raise ValueError('バックアップはメディア・リポジトリの外へ保存してください。')
     destination.mkdir(parents=True,exist_ok=False)
     destination.chmod(0o700)
     running = bool(run(['ps','--status','running','-q','web'],capture_output=True,text=True).stdout.strip())
@@ -32,7 +36,7 @@ def backup(destination):
         (destination/'manifest.json').write_text(json.dumps({'format_version':1,'created_at':datetime.now().isoformat(),'complete':True}))
         print(f'バックアップ完了: {destination}')
     finally:
-        if running: run(['start','web'])
+        if running and restart: run(['start','web'])
 
 def restore(source, project, destination):
     if not project.startswith('meme-restore-') or not all(c.isalnum() or c=='-' for c in project):
