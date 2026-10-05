@@ -41,5 +41,12 @@ services:
     command: [python, -m, pytest, -q, -p, no:cacheprovider, tests]
     depends_on:
       migrate: {condition: service_completed_successfully}
+  web:
+    <<: *test-app
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
 volumes:
   postgres:
