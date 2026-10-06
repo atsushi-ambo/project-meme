@@ -64,7 +64,12 @@ class SecurityMiddleware:
             supplied = headers.get(b'x-csrf-token', b'').decode('latin1')
             if mutation and not secrets.compare_digest(supplied, token):
                 return await rejection('送信を確認できません。', 403)(scope, receive, send)
-        maximum = 10_000_000 if scope['path']=='/api/profile-photo' and scope['method']=='PUT' else (settings.max_file_bytes if upload else 65536)
+        # フォームの日本語・絵文字はURLエンコードで最大12倍になる。
+        # 10000文字の正当なメモを受け付け、JSON/APIの上限は維持する。
+        content_type = headers.get(b'content-type', b'').split(b';', 1)[0].strip().lower()
+        form_limit = 131072 if (not scope['path'].startswith('/api/')
+            and content_type == b'application/x-www-form-urlencoded') else 65536
+        maximum = 10_000_000 if scope['path']=='/api/profile-photo' and scope['method']=='PUT' else (settings.max_file_bytes if upload else form_limit)
         seen = 0
         started = False
         deadline = asyncio.get_running_loop().time() + (settings.upload_timeout if upload else 60)
