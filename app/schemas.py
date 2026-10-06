@@ -11,6 +11,8 @@ JST = ZoneInfo('Asia/Tokyo')
 def parse_time(value):
     if value in ('', None):
         return None
+    if not isinstance(value, (str, datetime)):
+        raise ValueError('日時はISO形式の文字列で指定してください。')
     dt = datetime.fromisoformat(value) if isinstance(value, str) else value
     return (dt.replace(tzinfo=JST) if dt.tzinfo is None else dt).astimezone(timezone.utc)
 

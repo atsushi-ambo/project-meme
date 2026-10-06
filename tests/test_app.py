@@ -470,6 +470,8 @@ def test_codex_entry_api_validation_and_replay(client):
     assert client.post(url, json=data, headers={**headers, 'Origin': 'https://evil.example'}).status_code == 403
     assert client.post(url, json={**data, 'cat_id': 9}, headers=headers).status_code == 422
     assert client.post(url, json={**data, 'description': ''}, headers=headers).status_code == 422
+    for invalid_time in [123, True, [], {}]:
+        assert client.post(url, json={**data, 'occurred_at': invalid_time}, headers=headers).status_code == 422
     first = client.post(url, json=data, headers=headers)
     assert first.status_code == 200
     assert client.post(url, json=data, headers=headers).json() == first.json()
