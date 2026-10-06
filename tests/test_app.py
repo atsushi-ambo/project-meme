@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import select, delete, text
+from sqlalchemy import select, delete, text, func
 from sqlalchemy.exc import IntegrityError
 from app.main import app
 from app.config import settings
@@ -489,7 +489,7 @@ def test_codex_upload_and_retry_share_browser_storage(client, tmp_path):
     file.write_bytes(png())
     draft = {'kind': 'observation', 'entry': {'occurred_at': '2026-10-06T12:00:00+09:00',
              'description': 'おもちゃを持ってきて鳴いた。遊びたいのかもしれない。', 'submission_key': str(uuid.uuid4())},
-             'media': [{'path': str(file)}]}
+             'media': [{'path': str(file)}], 'guesses': ['preset:play']}
     headers = {'Origin': 'http://localhost:8000', 'X-CSRF-Token': csrf(client)}
     class Adapter:
         origin = 'http://localhost:8000'
@@ -505,4 +505,82 @@ def test_codex_upload_and_retry_share_browser_storage(client, tmp_path):
         assert len(rows) == 1 and rows[0].status == 'ready'
         mid = rows[0].id
     assert client.get(f'/media/{mid}').content == png()
-    assert 'おもちゃを持ってきて鳴いた' in client.get(first['url']).text
+    page = client.get(first['url']).text
+    assert 'おもちゃを持ってきて鳴いた' in page and '遊びたい' in page
+    with transaction() as db:
+        evidence = db.scalar(select(Evidence).where(Evidence.observation_id == first['id']))
+        assert evidence.assessment == 'unknown'
+
+
+def test_codex_guesses_are_safe_atomic_and_keep_owner_assessment(client):
+    oid = observation(client)
+    url = f'/api/observations/{oid}/guesses'
+    headers = {'Origin': 'http://localhost:8000', 'X-CSRF-Token': csrf(client)}
+    data = {'guesses': ['preset:attention']}
+    assert client.post(url, json=data).status_code == 403
+    assert client.post(url, json=data, headers={**headers, 'Origin': 'https://evil.example'}).status_code == 403
+    assert client.post(url, json={'guesses': []}, headers=headers).status_code == 422
+    assert client.post(url, json={'guesses': ['x' * 100]}, headers=headers).status_code == 422
+    assert client.post(url, json={'guesses': ['preset:attention'], 'assessment': 'supports'}, headers=headers).status_code == 422
+    assert client.post(url, json=data, headers=headers).status_code == 200
+    with transaction() as db:
+        item = db.scalar(select(DictionaryItem).where(DictionaryItem.title == 'かまってほしい'))
+        item_id = item.id
+        evidence = db.get(Evidence, (item_id, oid))
+        assert evidence.assessment == 'unknown'
+        evidence.assessment = 'contradicts'
+        evidence.rationale = '撫でても鳴き続けた。'
+    assert client.post(url, json=data, headers=headers).status_code == 200
+    with transaction() as db:
+        evidence = db.get(Evidence, (item_id, oid))
+        assert evidence.assessment == 'contradicts' and evidence.rationale == '撫でても鳴き続けた。'
+    assert client.post(url, json={'guesses': ['preset:play', 'preset:not-real']}, headers=headers).status_code == 422
+    with transaction() as db:
+        assert db.scalar(select(DictionaryItem.id).where(DictionaryItem.title == '遊びたい')) is None
+    assert client.post('/api/observations/999999/guesses', json=data, headers=headers).status_code == 404
+    with transaction() as db:
+        db.get(Observation, oid).deletion_requested_at = now()
+    assert client.post(url, json=data, headers=headers).status_code == 404
+
+
+def test_sample_migration_marks_legacy_without_changing_notes(client):
+    sample_id = observation(client, '【サンプル】架空の記録。')
+    real_id = observation(client, '本文中の【サンプル】という語は実記録。')
+    health_key = str(uuid.uuid4())
+    assert post(client, '/entries/health/save', dict(occurred_at='2026-10-06T12:00', event_type='other',
+        details='【サンプル】架空の体調。', submission_key=health_key)).status_code == 303
+    # このfixtureは明示した一時DBでのみ実行可能。実環境には接続しない。
+    env = {**os.environ, 'DATABASE_URL': 'postgresql+psycopg://meme_owner:test-owner-only@db:5432/meme'}
+    subprocess.run(['alembic', 'downgrade', '4d33b438142b'], env=env, check=True, capture_output=True)
+    try:
+        subprocess.run(['alembic', 'upgrade', 'head'], env=env, check=True, capture_output=True)
+        with transaction() as db:
+            assert db.get(Observation, sample_id).is_sample is True
+            assert db.get(Observation, sample_id).description == '【サンプル】架空の記録。'
+            assert db.get(Observation, real_id).is_sample is False
+            assert db.scalar(select(Health).where(Health.submission_key == health_key)).is_sample is True
+        assert post(client, f'/entries/observation/{sample_id}/save', dict(occurred_at='2026-10-06T12:00',
+            description='名前を変えたサンプル。', submission_key=str(uuid.uuid4()))).status_code == 303
+        with transaction() as db:
+            assert db.get(Observation, sample_id).is_sample is True
+    finally:
+        subprocess.run(['alembic', 'upgrade', 'head'], env=env, check=True, capture_output=True)
+
+
+def test_review_snapshot_stays_consistent_and_rejects_writes(client):
+    from sqlalchemy.exc import InternalError
+    from app.services import save_entry
+    from app.schemas import ObservationInput
+    with transaction(snapshot=True) as snapshot:
+        before = snapshot.scalar(select(func.count()).select_from(Observation))
+        with transaction() as writer:
+            save_entry(writer, 'observation', ObservationInput(occurred_at='2026-10-06T12:00',
+                description='集計中の新しい記録。', submission_key=uuid.uuid4()))
+        assert snapshot.scalar(select(func.count()).select_from(Observation)) == before
+    with transaction(snapshot=True) as snapshot:
+        assert snapshot.scalar(select(func.count()).select_from(Observation)) == before + 1
+    with pytest.raises(InternalError):
+        with transaction(snapshot=True) as snapshot:
+            snapshot.execute(text("UPDATE observations SET location='変更不可'"))
+    with transaction() as db:
+        assert db.scalar(select(Observation.location)) == ''

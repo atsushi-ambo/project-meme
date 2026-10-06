@@ -31,3 +31,5 @@
 .portrait-caption span{font-size:13px;font-weight:700;letter-spacing:.15em;display:block}.portrait-caption small{font-size:11px}
 .profile-preview{width:112px;height:112px;border-radius:50%;border:5px solid #e7ece2;object-fit:cover}
 @media(max-width:760px){.portrait.has-photo{max-width:270px;margin:12px 0 24px}.brand-photo{width:40px;height:40px}}
+
+.review-total{font-size:36px;font-weight:600;margin:8px 0}.review-notice{font-size:14px;background:#eff2e8}.review-table-wrap{overflow:auto}.review-table{width:100%;border-collapse:collapse;text-align:left}.review-table caption{text-align:left;margin-bottom:12px}.review-table th,.review-table td{padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}.review-source+.review-source{border-top:1px solid var(--line);margin-top:20px;padding-top:20px}

@@ -67,11 +67,26 @@ def load_draft(path):
     if path.stat().st_size > 65536:
         raise ValueError('下書きは64KB以内にしてください。')
     draft = json.loads(path.read_text())
-    if not isinstance(draft, dict) or set(draft) - {'kind', 'entry', 'media'}:
+    if not isinstance(draft, dict) or set(draft) - {'kind', 'entry', 'media', 'guesses'}:
         raise ValueError('下書きの項目が不正です。')
     if draft.get('kind') not in ('observation', 'health') or not isinstance(draft.get('entry'), dict):
         raise ValueError('kindとentryを指定してください。')
     uuid.UUID(draft['entry']['submission_key'])
+    guesses = draft.get('guesses', [])
+    if not isinstance(guesses, list) or len(guesses) > 30:
+        raise ValueError('予想は30件までの一覧で指定してください。')
+    presets = {'attention', 'play', 'food', 'door', 'follow', 'concern', 'unknown'}
+    for choice in guesses:
+        if not isinstance(choice, str) or not choice:
+            raise ValueError('予想は空でない文字列で指定してください。')
+        prefix, _, value = choice.partition(':')
+        valid_preset = prefix == 'preset' and value in presets
+        valid_item = (prefix == 'item' and value.isascii() and value.isdecimal()
+                      and len(value) <= 19 and 0 < int(value) <= 9223372036854775807)
+        if not valid_preset and not valid_item:
+            raise ValueError('予想には既定のpreset、またはitemと辞書IDを指定してください。')
+    if draft['kind'] != 'observation' and guesses:
+        raise ValueError('予想は観察の記録に追加できます。')
     media = draft.get('media', [])
     if not isinstance(media, list) or len(media) > 10:
         raise ValueError('添付は10件までです。')
@@ -100,6 +115,10 @@ def submit(draft, client):
         files.append((item, path, path.stat(), digest.hexdigest()))
     entry = client.request('POST', '/api/entries/' + draft['kind'], draft['entry'])
     print('本文保存済み: ' + client.origin + entry['url'], flush=True)
+    if draft.get('guesses'):
+        # 本文と同じ観察へ追加。再送でも重複せず、既存の判断を上書きしない。
+        client.request('POST', '/api/observations/' + str(entry['id']) + '/guesses',
+                       {'guesses': draft['guesses']})
     for item, path, stat, digest in files:
         key = uuid.uuid5(uuid.UUID(draft['entry']['submission_key']),
                          json.dumps([path.name, digest, item.get('captured_at')]))

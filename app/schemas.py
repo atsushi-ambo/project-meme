@@ -105,3 +105,10 @@ class MediaTimeInput(Input):
 
 class GuessesInput(Input):
     guesses: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator('guesses')
+    @classmethod
+    def bounded_guesses(cls, values):
+        if any(not value or len(value) > 40 for value in values):
+            raise ValueError('予想の項目が不正です。')
+        return values

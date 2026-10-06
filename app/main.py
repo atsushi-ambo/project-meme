@@ -22,6 +22,7 @@ from .schemas import ObservationInput, HealthInput, DictionaryInput, Interaction
 from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS, LOCATIONS, GUESS_PRESETS, add_guesses
 from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes
 from .exports import health_csv, export_zip
+from .reviews import build_weekly_review
 from .security import SecurityMiddleware
 from .profile_photo import photo_path, save_photo, icon_bytes, MAX_PHOTO_BYTES
 
@@ -123,6 +124,18 @@ def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30):
         else:
             query = query.where(model.details.contains(q, autoescape=True))
     return list(db.scalars(query.order_by(model.occurred_at.desc(), model.id.desc()).offset((page-1)*limit).limit(limit)))
+
+@app.get('/review/week')
+def weekly_review(request: Request, end: str = ''):
+    with transaction(snapshot=True) as db:
+        return render(request, 'review.html', report=build_weekly_review(db, end))
+
+
+@app.get('/api/reviews/week')
+def weekly_review_api(end: str = ''):
+    with transaction(snapshot=True) as db:
+        return build_weekly_review(db, end)
+
 
 @app.get('/observations')
 @app.get('/health')
@@ -311,6 +324,19 @@ async def create_entry_api(request: Request, kind: str):
         with transaction() as db:
             row = save_entry(db, kind, data)
             return {'id': row.id, 'url': f'/entries/{kind}/{row.id}'}
+    return await anyio.to_thread.run_sync(process)
+
+
+@app.post('/api/observations/{id}/guesses')
+async def guesses_api(request: Request, id: int):
+    try:
+        data = GuessesInput.model_validate(await request.json())
+    except (ValidationError, ValueError):
+        raise HTTPException(422, '追加する予想を確認してください。')
+    def process():
+        with transaction() as db:
+            add_guesses(db, id, data.guesses)
+        return {'status': 'saved', 'url': f'/entries/observation/{id}'}
     return await anyio.to_thread.run_sync(process)
 
 

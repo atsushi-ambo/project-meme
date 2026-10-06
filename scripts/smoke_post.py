@@ -19,8 +19,8 @@ def main():
         Image.new('RGB', (8, 8), 'orange').save(photo)
         draft = root / 'draft.json'
         draft.write_text(json.dumps({'kind': 'observation', 'entry': {
-            'submission_key': str(uuid.uuid4()), 'occurred_at': '2026-10-06T12:00:00+09:00',
-            'description': '自動テストの架空記録。'}, 'media': [{'path': str(photo)}]}))
+            'submission_key': str(uuid.uuid4()), 'occurred_at': '2030-01-01T12:00:00+09:00',
+            'description': '自動テストの架空記録。'}, 'guesses': ['preset:attention'], 'media': [{'path': str(photo)}]}))
         command = [sys.executable, 'scripts/post.py', str(draft), '--submit']
         first = subprocess.run(command, check=True, capture_output=True, text=True).stdout
         second = subprocess.run(command, check=True, capture_output=True, text=True).stdout
@@ -28,7 +28,15 @@ def main():
         url = first.splitlines()[0].split('http://localhost:8000', 1)[1]
         page = LocalClient(8000).request('GET', url, json_body=False)
         assert '自動テストの架空記録。' in page and 'test.png' in page
-    print('Codex投稿コマンド: 実HTTPで本文・添付・再送・画面表示を確認しました。')
+        assert 'かまってほしい' in page, '飼い主の予想が画面に表示されません。'
+        report = json.loads(subprocess.run([sys.executable, 'scripts/review.py', '--end', '2030-01-01'],
+            check=True, capture_output=True, text=True).stdout)
+        assert report['base_url'] == 'http://localhost:8000'
+        assert report['counts']['observations'] == 1
+        assert any(row['url'] == url for row in report['observations'])
+        assert any(item['title'] == 'かまってほしい' and item['counts']['unknown'] >= 1
+                   for item in report['hypotheses'])
+    print('Codex投稿コマンド: 実HTTPで本文・予想・添付・再送・画面表示を確認しました。')
 
 
 if __name__ == '__main__':
