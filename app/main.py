@@ -298,6 +298,22 @@ async def profile(request:Request):
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
 
+@app.post('/api/entries/{kind}')
+async def create_entry_api(request: Request, kind: str):
+    """Codex用の入口も画面と同じ検証・トランザクション・再送制御を使う。"""
+    if kind not in {'observation', 'health'}:
+        raise HTTPException(404, '記録の種類が不正です。')
+    try:
+        data = (ObservationInput if kind == 'observation' else HealthInput).model_validate(await request.json())
+    except (ValidationError, ValueError):
+        raise HTTPException(422, '本文・日時・項目を確認してください。')
+    def process():
+        with transaction() as db:
+            row = save_entry(db, kind, data)
+            return {'id': row.id, 'url': f'/entries/{kind}/{row.id}'}
+    return await anyio.to_thread.run_sync(process)
+
+
 @app.post('/api/media/reserve')
 async def reserve_media(request:Request):
     try: data=ReserveInput.model_validate(await request.json())

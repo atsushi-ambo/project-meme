@@ -18,13 +18,13 @@ def test_runner_isolation_and_cleanup(monkeypatch, failure, expected):
             return SimpleNamespace(returncode=0 if failure in ('health', 'restore') else failure)
         if 'up' in command and failure == 'health':
             return SimpleNamespace(returncode=9)
-        if 'exec' in command and failure == 'restore':
+        if 'exec' in command and 'db' in command and failure == 'restore':
             return SimpleNamespace(returncode=8)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(module['subprocess'], 'run', fake_run)
     assert module['main']() == expected
     run, *middle, cleanup, image = calls
-    assert len(middle) == (2 if failure in (0, 'restore') else 1 if failure == 'health' else 0)
+    assert len(middle) == (3 if failure in (0, 'restore') else 1 if failure == 'health' else 0)
     if middle:
         assert '--wait' in middle[0] and middle[0][-1] == 'web'
     project = run[run.index('-p') + 1]
