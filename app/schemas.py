@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 JST = ZoneInfo('Asia/Tokyo')
 
@@ -112,3 +112,18 @@ class GuessesInput(Input):
         if any(not value or len(value) > 40 for value in values):
             raise ValueError('予想の項目が不正です。')
         return values
+
+
+class ObservationEditInput(Input):
+    # HTMLフォームは文字列を送るため、ここでは整数への変換を許可する。
+    expected_revision: int = Field(ge=1, le=9223372036854775807)
+
+
+class AppendInput(Input):
+    operation_key: UUID
+    expected_revision: int = Field(strict=True, ge=1, le=9223372036854775807)
+    text: str = Field(min_length=1, max_length=10000)
+
+
+class MediaKeepInput(Input):
+    keep: StrictBool

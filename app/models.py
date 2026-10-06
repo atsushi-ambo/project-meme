@@ -29,11 +29,22 @@ class Observation(Timestamps, Base):
     timezone = Column(String(64), nullable=False, default='Asia/Tokyo')
     location = Column(String(200), nullable=False, default='')
     description = Column(Text, nullable=False)
+    revision = Column(BigInteger, nullable=False, default=1, server_default='1')
     is_sample = Column(Boolean, nullable=False, default=False, server_default='false')
     submission_key = Column(String(36), nullable=False, unique=True)
     submission_hash = Column(String(64), nullable=False)
     deletion_requested_at = Column(DateTime(timezone=True))
-    __table_args__ = (Index('ix_observation_date', 'cat_id', 'occurred_at'),)
+    __table_args__ = (CheckConstraint('revision >= 1', name='observation_revision'),
+                      Index('ix_observation_date', 'cat_id', 'occurred_at'),)
+
+class ObservationAppend(Base):
+    """追記の再送を判別する管理行。本文は観察の一つのメモにだけ保存する。"""
+    __tablename__ = 'observation_appends'
+    operation_key = Column(String(36), primary_key=True)
+    observation_id = Column(ForeignKey('observations.id', ondelete='CASCADE'), nullable=False, index=True)
+    request_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now)
+
 
 class Tag(Base):
     __tablename__ = 'situation_tags'

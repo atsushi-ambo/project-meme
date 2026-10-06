@@ -2,7 +2,7 @@
 import hashlib
 from sqlalchemy import select, delete
 from fastapi import HTTPException
-from .models import Cat, Observation, Health, Tag, ObservationTag, DictionaryItem, Evidence, Interaction, now
+from .models import Cat, Observation, ObservationAppend, Health, Tag, ObservationTag, DictionaryItem, Evidence, Interaction, now
 
 KINDS = {'observation': Observation, 'health': Health}
 LABELS = {'vomit':'吐いた','food':'食事','water':'水','toilet':'トイレ','weight':'体重','energy':'元気','other':'その他'}
@@ -22,13 +22,17 @@ def parent(db, kind, id, lock=False):
 def fingerprint(data):
     return hashlib.sha256(data.model_dump_json().encode()).hexdigest()
 
-def save_entry(db, kind, data, id=None):
+def save_entry(db, kind, data, id=None, *, expected_revision=None):
     # 同じ猫への新規保存を直列化し、再送を既存の結果へ結びつける。
     cat = db.scalar(select(Cat).where(Cat.id == 1).with_for_update())
     model = KINDS[kind]
     values = data.model_dump(exclude={'tags','submission_key'})
     if id:
         row = parent(db, kind, id, True)
+        if kind == 'observation':
+            if row.revision != expected_revision:
+                raise HTTPException(409, '別の画面やCodexから更新されています。入力したメモは下に残しています。保存済みの記録を確認し、編集画面を開き直して内容を合わせてください。')
+            row.revision += 1
     else:
         row = db.scalar(select(model).where(model.submission_key == str(data.submission_key)))
         if row:
@@ -125,3 +129,26 @@ def add_guesses(db, observation_id, choices):
             db.add(Evidence(dictionary_item_id=item.id, observation_id=observation.id,
                             assessment='unknown', rationale=''))
             db.flush()
+
+
+def append_observation(db, observation_id, data):
+    # 新規保存・編集と同じ順でロックし、本文と再送管理行を一緒に確定する。
+    db.scalar(select(Cat).where(Cat.id == 1).with_for_update())
+    row = parent(db, 'observation', observation_id, True)
+    request_hash = hashlib.sha256(f'{observation_id}:{fingerprint(data)}'.encode()).hexdigest()
+    previous = db.get(ObservationAppend, str(data.operation_key))
+    if previous:
+        if previous.observation_id != row.id or previous.request_hash != request_hash:
+            raise HTTPException(409, '同じ追記の送信キーに異なる内容があります。保存状態を確認してください。')
+        return row, True
+    if row.revision != data.expected_revision:
+        raise HTTPException(409, '確認後にメモが更新されています。最新の内容を確認してから追記してください。自動では上書きしません。')
+    combined = row.description + '\n\n' + data.text
+    if len(combined) > 10000:
+        raise HTTPException(422, '追記後のメモは10000文字以内にしてください。')
+    row.description = combined
+    row.revision += 1
+    db.add(ObservationAppend(operation_key=str(data.operation_key), observation_id=row.id,
+                             request_hash=request_hash))
+    db.flush()
+    return row, False

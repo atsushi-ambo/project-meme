@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 import anyio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Path as RoutePath
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -18,9 +18,9 @@ from starlette.background import BackgroundTask
 from .config import settings
 from .db import transaction
 from .models import Cat, Tag, Observation, Health, Comment, Interaction, DictionaryItem, Evidence, Media, now
-from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, MediaTimeInput, GuessesInput, JST
-from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS, LOCATIONS, GUESS_PRESETS, add_guesses
-from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes
+from .schemas import ObservationInput, HealthInput, DictionaryInput, InteractionInput, EvidenceInput, ReserveInput, MediaTimeInput, GuessesInput, AppendInput, ObservationEditInput, MediaKeepInput, JST
+from .services import parent, save_entry, save_dictionary, save_interaction, save_evidence, LABELS, ASSESSMENTS, CONDITIONS, LOCATIONS, GUESS_PRESETS, add_guesses, append_observation
+from .media import reserve, receive_upload, paths, request_delete, run_jobs, used_bytes, set_keep
 from .exports import health_csv, export_zip
 from .reviews import build_weekly_review
 from .security import SecurityMiddleware
@@ -155,6 +155,7 @@ def entry_form(request: Request, kind: str, id: int | None=None):
         selected = list(db.scalars(select(ObservationTag.tag_id).where(ObservationTag.observation_id==id))) if row and kind=='observation' else []
         values = {c.name:getattr(row,c.name) for c in row.__table__.columns} if row else {}
         values.update(tags=selected, submission_key=str(uuid.uuid4()))
+        if row and kind == 'observation': values['expected_revision'] = row.revision
         return render(request,'form.html',kind=kind,id=id,values=values,errors=[],tags=list(db.scalars(select(Tag))))
 
 @app.get('/entries/{kind}/{id}')
@@ -206,7 +207,7 @@ def print_health(request:Request,start:str='',end:str=''):
         return render(request,'print.html',rows=rows)
 
 async def read_form(request):
-    form = await request.form(max_files=0,max_fields=40,max_part_size=65536)
+    form = await request.form(max_files=0,max_fields=40,max_part_size=131072)
     supplied = str(form.get('csrf',''))
     if not secrets.compare_digest(supplied, request.state.csrf):
         raise HTTPException(403,'送信を確認できません。ページを開き直してください。')
@@ -217,16 +218,30 @@ async def read_form(request):
 async def entry_save(request: Request, kind:str,id:int|None=None):
     if kind not in {'observation','health'}: raise HTTPException(404)
     raw=await read_form(request)
-    def process():
-        try: data=(ObservationInput if kind=='observation' else HealthInput).model_validate(raw)
-        except ValidationError as error:
-            with transaction() as db:
-                response=render(request,'form.html',kind=kind,id=id,values=raw,tags=list(db.scalars(select(Tag))),errors=[f"{'.'.join(map(str,e['loc']))}: {e['msg']}" for e in error.errors()])
-                response.status_code=422
-                return response
+    def invalid_response(errors, status):
         with transaction() as db:
-            row=save_entry(db,kind,data,id)
-            return RedirectResponse(f'/entries/{kind}/{row.id}',303)
+            response = render(request, 'form.html', kind=kind, id=id, values=raw,
+                tags=list(db.scalars(select(Tag))), errors=errors)
+            response.status_code = status
+            return response
+    def process():
+        payload = dict(raw)
+        expected_revision = None
+        try:
+            if id and kind == 'observation':
+                expected_revision = ObservationEditInput.model_validate({
+                    'expected_revision': payload.pop('expected_revision', None)}).expected_revision
+            data = (ObservationInput if kind == 'observation' else HealthInput).model_validate(payload)
+        except ValidationError as error:
+            return invalid_response([f"{'.'.join(map(str,e['loc']))}: {e['msg']}" for e in error.errors()], 422)
+        try:
+            with transaction() as db:
+                row = save_entry(db, kind, data, id, expected_revision=expected_revision)
+                return RedirectResponse(f'/entries/{kind}/{row.id}', 303)
+        except HTTPException as error:
+            if id and kind == 'observation' and error.status_code == 409:
+                return invalid_response([str(error.detail)], 409)
+            raise
     return await anyio.to_thread.run_sync(process)
 
 @app.post('/entries/{kind}/{id}/delete')
@@ -327,6 +342,47 @@ async def create_entry_api(request: Request, kind: str):
     return await anyio.to_thread.run_sync(process)
 
 
+@app.get('/api/observations/{id}')
+def observation_api(id: int = RoutePath(ge=1, le=9223372036854775807)):
+    # 一時点の本文と版番号。内部の保存キー・ローカルパスは返さない。
+    with transaction(snapshot=True) as db:
+        row = parent(db, 'observation', id)
+        media = list(db.scalars(select(Media).where(Media.observation_id == id,
+            Media.status == 'ready').order_by(Media.id).limit(10)))
+        return {'id': row.id, 'url': f'/entries/observation/{row.id}',
+                'description': row.description, 'revision': row.revision,
+                'occurred_at': row.occurred_at, 'location': row.location,
+                'media': [{'id': item.id, 'original_name': item.original_name, 'keep': item.keep,
+                           'expires_at': item.expires_at} for item in media]}
+
+
+@app.post('/api/observations/{id}/append')
+async def append_api(request: Request, id: int = RoutePath(ge=1, le=9223372036854775807)):
+    try:
+        data = AppendInput.model_validate(await request.json())
+    except (ValidationError, ValueError):
+        raise HTTPException(422, '追記の本文・送信キー・確認した版番号を確認してください。')
+    def process():
+        with transaction() as db:
+            row, replayed = append_observation(db, id, data)
+            return {'id': row.id, 'url': f'/entries/observation/{row.id}',
+                    'revision': row.revision, 'replayed': replayed}
+    return await anyio.to_thread.run_sync(process)
+
+
+@app.post('/api/media/{id}/keep')
+async def keep_api(request: Request, id: int = RoutePath(ge=1, le=9223372036854775807)):
+    try:
+        data = MediaKeepInput.model_validate(await request.json())
+    except (ValidationError, ValueError):
+        raise HTTPException(422, 'keepにはtrueまたはfalseを指定してください。')
+    def process():
+        with transaction() as db:
+            row = set_keep(db, id, data.keep)
+            return {'id': row.id, 'keep': row.keep}
+    return await anyio.to_thread.run_sync(process)
+
+
 @app.post('/api/observations/{id}/guesses')
 async def guesses_api(request: Request, id: int):
     try:
@@ -390,14 +446,17 @@ async def media_action(request:Request,id:int,action:str):
     await read_form(request)
     def process():
         with transaction() as db:
-            row=db.get(Media,id,with_for_update=True)
-            if not row or row.status!='ready': raise HTTPException(409,'添付は処理中か削除済みです。')
-            parent(db,'observation' if row.observation_id else 'health',row.observation_id or row.health_entry_id)
-            if action=='keep':
-                if not row.keep and row.expires_at<=now(): raise HTTPException(409,'保存期限を過ぎています。')
-                row.keep=not row.keep
-            elif action=='delete': row.status='delete_pending'; row.deletion_reason='user_deleted'
-            else: raise HTTPException(404)
+            if action == 'keep':
+                set_keep(db, id)
+            elif action == 'delete':
+                row = db.get(Media, id, with_for_update=True)
+                if not row or row.status != 'ready':
+                    raise HTTPException(409, '添付は処理中か削除済みです。')
+                parent(db, 'observation' if row.observation_id else 'health', row.observation_id or row.health_entry_id)
+                row.status = 'delete_pending'
+                row.deletion_reason = 'user_deleted'
+            else:
+                raise HTTPException(404)
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
 

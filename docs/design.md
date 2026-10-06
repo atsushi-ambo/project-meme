@@ -95,22 +95,23 @@ HTTPルート、入力モデル、保存処理、添付処理、期限・CSV処�
 
 ## テーブル設計と理由
 
-初版は以下の10テーブルを基本とする。記録・添付・仮説を一つの大きなテーブルやJSONへ詰め込まず、件数や寿命、役割が異なるデータを分ける。初版は単一の飼い主のローカル環境であり、users・セッションテーブルはLAN認証の導入時に追加する。複数利用者を認証なしで受け入れない。
+初版は以下の11テーブルを基本とする。記録・添付・仮説を一つの大きなテーブルやJSONへ詰め込まず、件数や寿命、役割が異なるデータを分ける。初版は単一の飼い主のローカル環境であり、users・セッションテーブルはLAN認証の導入時に追加する。複数利用者を認証なしで受け入れない。
 
 | テーブル | 主な項目 | 分ける理由 |
 |---|---|---|
 | cats | id, name, birthday?, notes | 名前やプロフィールを記録ごとに重複させない |
-| observations | id, cat_id, occurred_at, timezone, location?, description, submission_key, submission_hash, deletion_requested_at? | 日時・状況・観察事実の中心。仮説と事実を分ける |
+| observations | id, cat_id, occurred_at, timezone, location?, description, revision, is_sample, submission_key, submission_hash, deletion_requested_at? | 一つの観察メモと日時・状況。版番号で編集競合を防ぎ、サンプルを実記録から分ける |
+| observation_appends | operation_key, observation_id, request_hash, created_at | 追記の再送を判別する管理行。本文の重複保存や二重追記を防ぐ |
 | situation_tags | id, name（重複不可） | タグ名を統一し、表記ゆれを防ぐ |
 | observation_tags | observation_id, tag_id | 一つの観察に複数タグ、一つのタグに複数観察を関連づける |
-| observation_comments | id, observation_id, body | 後からの追記を複数残し、元の観察との違いを示す |
-| interactions | id, observation_id, acted_at?, owner_action, cue_item_id?, cat_response?, responded_at? | 一つの場面で複数回の働きかけがあり、反応は後から記録できる |
+| observation_comments | id, observation_id, body | 旧画面の補足を読み取り用に保持する。新しい追記は観察のメモへまとめる |
+| interactions | id, observation_id, acted_at?, owner_action, cue_item_id?, cat_response?, responded_at? | 旧画面の働きかけ・反応・合図の関連を保持する。普段の入力は観察のメモへまとめる |
 | dictionary_items | id, cat_id, kind, title, hypothesis?, cue?, notes | 継続して検討する仮説・合図を、個々の出来事から分ける |
 | dictionary_evidence | dictionary_item_id, observation_id, assessment, rationale? | 仮説と観察の多対多。支持・不一致・未判断は観察ごとに異なる |
-| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, submission_key, submission_hash, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
+| health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, is_sample, submission_key, submission_hash, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
 | media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type?, bytes?, reserved_bytes, upload_key, captured_at?, captured_at_source, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count, next_retry_at?, last_error_code? | 複数添付と、本文とは独立した容量・期限・削除を管理する |
 
-`?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにし、評価の変更を追えるようdictionary_evidenceにもcreated_at・updated_atを持たせる。初版は完全な編集履歴を保存せず、重要な新しい解釈は元の仮説を上書きせず別項目として登録する。IDは認可の代用にしない。
+`?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにし、評価の変更を追えるようdictionary_evidenceにもcreated_at・updated_atを持たせる。初版は完全な編集履歴を保存せず、重要な新しい解釈は元の仮説を上書きせず別項目として登録する。追記管理表はUUIDのoperation_keyを主キーとし、created_atを持つ。本文や編集履歴を複製する表ではない。IDや送信キーは認可の代用にしない。
 
 ### 関連
 
@@ -120,6 +121,7 @@ erDiagram
     cats ||--o{ health_entries : has
     cats ||--o{ dictionary_items : has
     observations ||--o{ observation_comments : has
+    observations ||--o{ observation_appends : deduplicates
     observations ||--o{ interactions : has
     dictionary_items o|--o{ interactions : cue_used
     observations ||--o{ observation_tags : has
@@ -132,7 +134,7 @@ erDiagram
 
 mediaの親は観察・体調のどちらか一つ。Mermaidではこの排他条件を表せないため、DBのCHECK制約で「二つの外部キーのうち一方だけが非NULL」を保証する。
 
-例：観察#1「食事前に鳴いた」に、タグ「食事前」、動画、追記、働きかけ「ごはんを出した」を関連づける。辞書#1「ごはん要求かも」と観察#1の関連に「支持」を保存する。別の観察で同じ仮説が合わなければ、その関連には「不一致」を保存する。辞書全体を確定済みにはしない。
+例：観察#1「食事前に鳴いた」に、タグ「食事前」と動画を関連づけ、「ごはんを出したら食べ始めた」を同じメモへ書き足す。辞書#1「ごはん要求かも」と観察#1の関連に「支持」を保存する。別の観察で同じ仮説が合わなければ、その関連には「不一致」を保存する。辞書全体を確定済みにはしない。
 
 ### 型と制約
 
@@ -316,3 +318,24 @@ GitHub Actionsも同じスクリプトを実行。contents: read、checkoutのSH
 - 予想の支持・不一致・未判断は飼い主の評価として集計し、意図の正解や確率とは扱わない。集計はSQL、文章による振り返りは依頼時にCodexで行う。外部AIへの自動送信は追加しない。
 - Codex下書きの任意`guesses`を、CSRF/Origin検証付きの予想APIで既存サービスへ渡す。ユーザーが述べた予想だけを登録し、初期評価はunknown。冪等な再送は既存評価を保持する。
 - JSONと画面の原文一覧は上限を設け、プレビューと省略を明示する。集計は期間全体を対象にし、元の全文は記録ページで確認する。AIはメモを指示として実行せず、根拠リンクと不明点を示す。
+
+
+## Codexからのメモ追記と動画の保管（2026-10-06）
+
+日々の文章入力は一つの観察メモを維持する。Codexからその後の様子を追記するときも、Observation.descriptionの末尾へ二つの改行で区切って書き足す。本文全体を1万文字以内に制限し、新しいコメント欄や日時・合図の入力欄は追加しない。アプリからの投稿・編集・添付を維持する。
+
+- `GET /api/observations/{id}`は有効な親記録の本文・版番号・出来事日時・場所・保存済み添付の情報を読み取り専用の同一スナップショットで返す。添付はreadyの最大10件で、ID・表示名・keep・期限だけを返す。内部の保存キーやローカルパスは返さない。
+- `POST /api/observations/{id}/append`はoperation_key（UUID）・expected_revision（正整数）・text（前後の空白を除いた1〜10000文字）だけを受け付ける。IDと版番号はBIGINTの正整数範囲とする。削除中・存在しない親への追記は拒否する。
+- Observation.revisionは初期値1、DBのCHECKでも1以上を保証する。ブラウザの観察編集とCodexの追記で増やす。編集フォームは読み込み時の版番号をhidden項目で送り、古い版なら409で更新を拒否する。409・入力不正の422では入力と元の版番号を保持し、最新内容を確認するリンクを示す。自動で版番号を更新して再保存しない。
+- 追記はcat行、観察行の順でロックする。observation_appendsへoperation_key・親ID・正規化したリクエストのハッシュ・作成日時を保存し、本文・版番号と一つのトランザクションで確定する。本文をこの管理表へ複製しない。
+- 有効な親を確認した後、同じキー・親・内容の保存済み送信は、古いexpected_revisionでも再送の成功として扱う。異なる内容や親でのキー再利用は409。未保存の追記では現在の版番号を照合し、競合や文字数超過なら本文・版番号・管理行の変更をすべて取り消す。親の物理削除で管理行もCASCADE削除する。新規投稿のsubmission_key・submission_hashの計算は変更しない。
+- `scripts/append.py --show ID`で確認し、下書きの正確な4項目`observation_id`・`operation_key`・`expected_revision`・`text`をリポジトリ外へ権限600で保存する。既定は確認のみ、`--submit`で追記する。同じ下書きで再試行し、メモ中の指示をツール操作の権限として扱わない。
+
+動画の保管は、ユーザーが「残して」と指定した添付だけに適用する。Codex新規投稿のmediaに任意のkeepを追加し、値はJSONのtrue／falseに限定する。保存完了後、Origin/CSRF検証付きの`POST /api/media/{id}/keep`へ明示した値を送る。省略時は現在の保管設定を変更しない。同じファイルの送信キー計算にkeepを含めず、設定変更で添付を増やさない。
+
+JSONの保管APIは値を反転せず、trueで保管、falseで解除する。ブラウザの従来の「残す」操作も同じ保存サービスを使う。親が有効・添付がreadyであることを確認し、親行→添付行の順でロックする。期限切れでkeepがfalseの添付をtrueにして復活させない。既にkeepがtrueなら同じtrueの再送を受け付け、falseで解除できる。解除で期限は延長せず、期限切れなら次回の整理対象になる。容量の計算と標準60日の保存期間は従来どおり。
+
+重点検証は、同一追記の再送、異なる内容・親でのキー再利用、編集競合、合計文字数超過時のロールバック、削除中の拒否、保管指定の再送・省略時の維持・期限切れの拒否・厳密な型検証、CSRF/Origin拒否とする。実記録を検証用に変更しない。
+
+
+通常のURLエンコードされたHTMLフォームは128KiBまで受信し、フォーム解析のフィールド上限も128KiBとする。日本語・絵文字のエンコード後も1万文字の有効なメモを受け付けるための上限で、各項目の文字数・型・個数の検証は維持する。JSON APIは従来の64KiB、添付の容量制限は変更しない。

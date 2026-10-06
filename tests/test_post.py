@@ -154,3 +154,130 @@ def test_guess_failure_leaves_entry_url_and_does_not_upload_media(poster, tmp_pa
         poster['submit'](draft, Client())
     assert calls == ['/api/entries/observation', '/api/observations/9/guesses']
     assert 'http://localhost:8000/entries/observation/9' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('keep', ['true', 'false', 1, 0, None, [], {}])
+def test_draft_rejects_keep_without_strict_boolean(poster, tmp_path, keep):
+    photo = tmp_path / 'photo.png'
+    photo.write_bytes(b'fake media validated server-side')
+    draft = tmp_path / 'draft.json'
+    draft.write_text(json.dumps({'kind': 'observation',
+                                'entry': {'submission_key': str(uuid.uuid4())},
+                                'media': [{'path': str(photo), 'keep': keep}]}))
+    with pytest.raises(ValueError, match='keep'):
+        poster['load_draft'](draft)
+
+
+@pytest.mark.parametrize('kind, keep, extension', [
+    ('observation', True, '.MOV'), ('observation', False, '.png'),
+    ('health', True, '.m4a'), ('health', False, '.jpg'),
+])
+def test_draft_accepts_explicit_keep_for_all_record_types(poster, tmp_path, kind, keep, extension):
+    file = tmp_path / ('media' + extension)
+    file.write_bytes(b'fake media validated server-side')
+    draft = tmp_path / 'draft.json'
+    draft.write_text(json.dumps({'kind': kind,
+                                'entry': {'submission_key': str(uuid.uuid4())},
+                                'media': [{'path': str(file), 'keep': keep}]}))
+    assert poster['load_draft'](draft)['media'][0]['keep'] is keep
+
+
+def test_keep_replay_sets_state_without_reupload_or_new_key(poster, tmp_path, capsys):
+    video = tmp_path / 'video.mov'
+    video.write_bytes(b'fake media validated server-side')
+    calls = []
+    upload_keys = []
+    class Client:
+        origin = 'http://localhost:8000'
+        ready = False
+        keep = False
+        def request(self, method, path, body, size=None):
+            calls.append((method, path))
+            if path == '/api/entries/observation':
+                return {'id': 9, 'url': '/entries/observation/9'}
+            if path == '/api/media/reserve':
+                upload_keys.append(body['upload_key'])
+                return {'id': 3, 'status': 'ready' if self.ready else 'pending'}
+            if method == 'PUT':
+                assert size == video.stat().st_size and body.read() == video.read_bytes()
+                self.ready = True
+                return {'status': 'ready'}
+            assert path == '/api/media/3/keep' and method == 'POST'
+            assert set(body) == {'keep'} and type(body['keep']) is bool
+            self.keep = body['keep']
+            return {'id': 3, 'keep': self.keep}
+    item = {'path': str(video), 'keep': True}
+    draft = {'kind': 'observation', 'entry': {'submission_key': str(uuid.uuid4())},
+             'media': [item]}
+    client = Client()
+    poster['submit'](draft, client)
+    assert calls.index(('PUT', '/api/media/3')) < calls.index(('POST', '/api/media/3/keep'))
+    assert client.keep is True
+    poster['submit'](draft, client)
+    assert client.keep is True
+    item['keep'] = False
+    poster['submit'](draft, client)
+    assert client.keep is False
+    assert len(upload_keys) == 3 and len(set(upload_keys)) == 1
+    assert calls.count(('PUT', '/api/media/3')) == 1
+    assert calls.count(('POST', '/api/media/3/keep')) == 3
+    output = capsys.readouterr().out
+    assert output.count('期限を付けず保管') == 2
+    assert output.count('通常の保存期限に戻す') == 1
+
+
+def test_missing_keep_does_not_reset_existing_retention(poster, tmp_path):
+    video = tmp_path / 'video.mov'
+    video.write_bytes(b'fake media validated server-side')
+    calls = []
+    class Client:
+        origin = 'http://localhost:8000'
+        def request(self, method, path, body):
+            calls.append(path)
+            if path == '/api/entries/observation':
+                return {'id': 9, 'url': '/entries/observation/9'}
+            assert path == '/api/media/reserve'
+            return {'id': 3, 'status': 'ready'}
+    draft = {'kind': 'observation', 'entry': {'submission_key': str(uuid.uuid4())},
+             'media': [{'path': str(video)}]}
+    poster['submit'](draft, Client())
+    assert calls == ['/api/entries/observation', '/api/media/reserve']
+
+
+def test_keep_failure_preserves_uploaded_file_and_retry_uses_same_key(poster, tmp_path, capsys):
+    photo = tmp_path / 'photo.png'
+    photo.write_bytes(b'fake media validated server-side')
+    calls = []
+    keys = []
+    class Client:
+        origin = 'http://localhost:8000'
+        ready = False
+        fail = True
+        def request(self, method, path, body, size=None):
+            calls.append((method, path))
+            if path == '/api/entries/observation':
+                return {'id': 9, 'url': '/entries/observation/9'}
+            if path == '/api/media/reserve':
+                keys.append(body['upload_key'])
+                return {'id': 3, 'status': 'ready' if self.ready else 'pending'}
+            if method == 'PUT':
+                self.ready = True
+                return {'status': 'ready'}
+            assert path == '/api/media/3/keep'
+            if self.fail:
+                raise ValueError('HTTP 409: 処理中です。')
+            return {'id': 3, 'keep': body['keep']}
+    draft = {'kind': 'observation', 'entry': {'submission_key': str(uuid.uuid4())},
+             'media': [{'path': str(photo), 'keep': True}]}
+    client = Client()
+    with pytest.raises(ValueError, match='添付は保存済み.*保管設定'):
+        poster['submit'](draft, client)
+    output = capsys.readouterr().out
+    assert '本文保存済み: http://localhost:8000/entries/observation/9' in output
+    assert '添付保存済み: photo.png' in output
+    assert '保管設定済み' not in output
+    client.fail = False
+    poster['submit'](draft, client)
+    assert keys[0] == keys[1]
+    assert calls.count(('PUT', '/api/media/3')) == 1
+    assert '保管設定済み' in capsys.readouterr().out

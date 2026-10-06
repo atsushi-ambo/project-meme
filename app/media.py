@@ -59,6 +59,24 @@ def reserve(db, data):
     db.flush()
     return row
 
+def set_keep(db, id, value=None):
+    """JSONは明示した値、従来のブラウザ操作は反転。親→添付の順でロック。"""
+    row = db.get(Media, id)
+    if not row:
+        raise HTTPException(409, '添付は処理中か削除済みです。')
+    parent(db, 'observation' if row.observation_id else 'health',
+           row.observation_id or row.health_entry_id, True)
+    row = db.scalar(select(Media).where(Media.id == id).with_for_update()
+                    .execution_options(populate_existing=True))
+    if not row or row.status != 'ready':
+        raise HTTPException(409, '添付は処理中か削除済みです。')
+    desired = not row.keep if value is None else value
+    if desired and not row.keep and row.expires_at <= now():
+        raise HTTPException(409, '保存期限を過ぎています。')
+    row.keep = desired
+    return row
+
+
 def inspect_file(path, name):
     suffix = Path(name).suffix.lower()
     if suffix in {'.jpg','.jpeg','.png'}:

@@ -71,7 +71,7 @@ def test_observation_roundtrip_and_idempotency(client):
     assert observation(client,'<script>alert(1)</script>',key)==id
     text=client.get(f'/entries/observation/{id}').text
     assert '&lt;script&gt;' in text and '<script>alert' not in text
-    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T13:00',description='更新',location='',submission_key=str(uuid.uuid4()))).status_code==303
+    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T13:00',description='更新',location='',submission_key=str(uuid.uuid4()),expected_revision=1)).status_code==303
     assert '更新' in client.get(f'/entries/observation/{id}').text
     assert post(client,f'/observations/{id}/comment',{'body':'撮影前の様子'}).status_code==303
     assert '撮影前の様子' in client.get(f'/entries/observation/{id}').text
@@ -205,7 +205,7 @@ def test_backup_lock_and_body_limit(client):
         response=post_without_get(client,'/profile',dict(name='変更',notes=''))
         assert response.status_code==409
     token=csrf(client)
-    result=client.post('/profile',content=('csrf='+token+'&name='+('a'*70000)),headers={'Origin':'http://localhost:8000','Content-Type':'application/x-www-form-urlencoded'})
+    result=client.post('/profile',content=('csrf='+token+'&name='+('a'*140000)),headers={'Origin':'http://localhost:8000','Content-Type':'application/x-www-form-urlencoded'})
     assert result.status_code in {400,413}
 
 def post_without_get(client,url,data):
@@ -367,7 +367,7 @@ def test_one_memo_ui_preserves_legacy_notes(client):
     assert form.count('<textarea')==1
     assert '記入例（保存されません）' in form
     assert 'おもちゃを持ってきた。立つと走っていった。</textarea>' in form
-    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T12:00',description='まとめたメモ',location='',submission_key=str(uuid.uuid4()))).status_code==303
+    assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T12:00',description='まとめたメモ',location='',submission_key=str(uuid.uuid4()),expected_revision=1)).status_code==303
     detail=client.get(f'/entries/observation/{id}').text
     assert 'まとめたメモ' in detail and '保存済みの補足' in detail and '廊下へ走った' in detail
 
@@ -560,7 +560,7 @@ def test_sample_migration_marks_legacy_without_changing_notes(client):
             assert db.get(Observation, real_id).is_sample is False
             assert db.scalar(select(Health).where(Health.submission_key == health_key)).is_sample is True
         assert post(client, f'/entries/observation/{sample_id}/save', dict(occurred_at='2026-10-06T12:00',
-            description='名前を変えたサンプル。', submission_key=str(uuid.uuid4()))).status_code == 303
+            description='名前を変えたサンプル。', submission_key=str(uuid.uuid4()), expected_revision=1)).status_code == 303
         with transaction() as db:
             assert db.get(Observation, sample_id).is_sample is True
     finally:

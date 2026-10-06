@@ -91,8 +91,10 @@ def load_draft(path):
     if not isinstance(media, list) or len(media) > 10:
         raise ValueError('添付は10件までです。')
     for item in media:
-        if not isinstance(item, dict) or set(item) - {'path', 'captured_at'}:
+        if not isinstance(item, dict) or set(item) - {'path', 'captured_at', 'keep'}:
             raise ValueError('添付の項目が不正です。')
+        if 'keep' in item and type(item['keep']) is not bool:
+            raise ValueError('添付のkeepはtrueまたはfalseで指定してください。')
         file = Path(item['path']).expanduser()
         if not file.is_absolute() or not file.is_file():
             raise ValueError('添付には存在するファイルの絶対パスを指定してください。')
@@ -143,6 +145,16 @@ def submit(draft, client):
         else:
             raise ValueError('添付の再試行上限です。アプリで保存状態を確認してください。')
         print('添付保存済み: ' + path.name, flush=True)
+        if 'keep' in item:
+            # 明示された場合だけ設定する。再送でも切り替わらず、添付は増やさない。
+            try:
+                client.request('POST', '/api/media/' + str(reservation['id']) + '/keep',
+                               {'keep': item['keep']})
+            except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
+                raise ValueError('添付は保存済みですが、保管設定を変更できませんでした。'
+                                 '同じ下書きで再実行してください: ' + str(error)) from error
+            mode = '期限を付けず保管' if item['keep'] else '通常の保存期限に戻す'
+            print('保管設定済み: ' + path.name + '（' + mode + '）', flush=True)
     return entry
 
 
@@ -161,7 +173,7 @@ def main():
         submit(draft, LocalClient(args.port))
         return 0
     except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
-        print(f'投稿未完了: {error}\n本文だけ保存されている場合があります。同じ下書きで再実行すると重複を防げます。', file=sys.stderr)
+        print(f'投稿未完了: {error}\n本文・添付が保存済みの場合があります。同じ下書きで再実行すると重複を防げます。', file=sys.stderr)
         return 1
 
 
