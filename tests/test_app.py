@@ -460,3 +460,47 @@ def test_api_rejections_are_readable_json(client):
         assert response.status_code==409 and '全削除の処理中' in response.json()['detail']
     finally:
         marker.unlink(missing_ok=True)
+
+
+def test_codex_entry_api_validation_and_replay(client):
+    headers = {'Origin': 'http://localhost:8000', 'X-CSRF-Token': csrf(client)}
+    data = dict(occurred_at='2026-10-06T12:00:00+09:00', description='鳴いた。理由は不明。', submission_key=str(uuid.uuid4()))
+    url = '/api/entries/observation'
+    assert client.post(url, json=data).status_code == 403
+    assert client.post(url, json=data, headers={**headers, 'Origin': 'https://evil.example'}).status_code == 403
+    assert client.post(url, json={**data, 'cat_id': 9}, headers=headers).status_code == 422
+    assert client.post(url, json={**data, 'description': ''}, headers=headers).status_code == 422
+    first = client.post(url, json=data, headers=headers)
+    assert first.status_code == 200
+    assert client.post(url, json=data, headers=headers).json() == first.json()
+    assert client.get(first.json()['url']).status_code == 200
+    assert client.post(url, json={**data, 'description': '別の本文'}, headers=headers).status_code == 409
+    health = dict(occurred_at=data['occurred_at'], event_type='weight', weight_value='4.5', weight_unit='kg', submission_key=str(uuid.uuid4()))
+    assert client.post('/api/entries/health', json=health, headers=headers).status_code == 200
+    assert client.post('/api/entries/other', json=data, headers=headers).status_code == 404
+
+
+def test_codex_upload_and_retry_share_browser_storage(client, tmp_path):
+    import runpy
+    module = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/post.py'))
+    file = tmp_path / 'cat.png'
+    file.write_bytes(png())
+    draft = {'kind': 'observation', 'entry': {'occurred_at': '2026-10-06T12:00:00+09:00',
+             'description': 'おもちゃを持ってきて鳴いた。遊びたいのかもしれない。', 'submission_key': str(uuid.uuid4())},
+             'media': [{'path': str(file)}]}
+    headers = {'Origin': 'http://localhost:8000', 'X-CSRF-Token': csrf(client)}
+    class Adapter:
+        origin = 'http://localhost:8000'
+        def request(self, method, path, body, size=None):
+            response = client.request(method, path, headers=headers,
+                **({'content': body.read()} if size is not None else {'json': body}))
+            assert response.status_code == 200, response.text
+            return response.json()
+    first = module['submit'](draft, Adapter())
+    assert module['submit'](draft, Adapter()) == first
+    with transaction() as db:
+        rows = list(db.scalars(select(Media).where(Media.observation_id == first['id'])))
+        assert len(rows) == 1 and rows[0].status == 'ready'
+        mid = rows[0].id
+    assert client.get(f'/media/{mid}').content == png()
+    assert 'おもちゃを持ってきて鳴いた' in client.get(first['url']).text

@@ -23,6 +23,8 @@ def main():
             result = run(compose + ['up', '-d', '--no-deps', '--no-build',
                                     '--wait', '--wait-timeout', '90', 'web'])
         if result == 0:
+            result = run(compose + ['exec', '-T', 'web', 'python', 'scripts/smoke_post.py'])
+        if result == 0:
             # テストDB内だけで、本物のpg_dump/pg_restoreによる復元を検証する。
             result = run(compose + ['exec', '-T', 'db', 'sh', '-ec', """
                 dump=$(mktemp)
