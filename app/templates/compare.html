@@ -1,0 +1,31 @@
+{% extends 'base.html' %}{% from 'macros.html' import media_facts %}
+{% block content %}
+<div class="section-title"><h1>記録を比べる</h1>{% if report %}<a class="button secondary" href="/compare">選び直す</a>{% endif %}</div>
+{% if not report %}
+<p>似た場面や違う反応の記録を1〜5件選んで、メモと動画を並べて見返せます。</p>
+<form class="card filters" method="get" action="/compare"><label>キーワード<input name="q" value="{{ q }}" maxlength="200"></label><label>開始日<input type="date" name="start" value="{{ start }}"></label><label>終了日<input type="date" name="end" value="{{ end }}"></label><button class="secondary">探す</button></form>
+<form method="get" action="/compare">
+<fieldset class="comparison-options"><legend>比較する記録（1〜5件）</legend>
+{% for row in rows %}<label class="card comparison-choice"><input type="checkbox" name="selected" value="{{ row.id }}"><span><span class="muted">{{ row.occurred_at|localtime }} · {{ row.location or '場所未入力' }}</span><span class="comparison-preview">{{ row.description|truncate(160) }}</span><a href="/entries/observation/{{ row.id }}">記録を開く</a></span></label>{% else %}<p class="muted">この条件の実記録はありません。</p>{% endfor %}
+</fieldset>{% if rows %}<button>選んだ記録を比べる</button>{% endif %}</form>
+<div class="actions">{% if page>1 %}<a href="?page={{ page-1 }}&q={{ q|urlencode }}&start={{ start }}&end={{ end }}">← 前へ</a>{% endif %}<span>{{ page }}ページ</span>{% if rows|length==30 %}<a href="?page={{ page+1 }}&q={{ q|urlencode }}&start={{ start }}&end={{ end }}">次へ →</a>{% endif %}</div>
+{% else %}
+<p>前後の状況・自分がしたこと・メメの反応を見返して、共通する場面と違う例を探してみましょう。分からないことはそのまま残せます。</p>
+<div class="actions"><a class="button secondary" href="/api/analysis/observations?ids={{ ids }}" download="meme-comparison.json">比較資料を保存（JSON）</a><span class="muted">{{ report.observations|length }}件 · メモは全文</span></div>
+<div class="comparison-grid">
+{% for row in report.observations %}<article class="card comparison-record">
+<header><div><p class="eyebrow">{{ row.occurred_at|isotime }}</p><h2><a href="{{ row.url }}">記録 #{{ row.id }}</a></h2><p class="muted">{{ row.location or '場所未入力' }}{% if row.tags %} · {% for tag in row.tags %}{{ tag.name }}{{ ' / ' if not loop.last }}{% endfor %}{% endif %}</p></div></header>
+<section><h3>そのときの様子・前後のメモ</h3><p class="preserve">{{ row.description }}</p></section>
+<section><h3>飼い主の意味の予想</h3>{% for guess in row.guesses %}<div class="comparison-guess"><a href="{{ guess.url }}">{{ guess.title }}</a><span class="pill">{{ guess.assessment_label }}</span>{% if guess.rationale %}<p>{{ guess.rationale }}{% if guess.rationale_truncated %}… <a href="{{ row.url }}">全文を見る</a>{% endif %}</p>{% endif %}</div>{% else %}<p class="muted">予想はまだ選ばれていません。</p>{% endfor %}</section>
+<section><h3>動画・写真・音声</h3>{% for m in row.media %}<div class="comparison-media"><p>{{ m.original_name }}</p>
+{% if m.available %}{% if m.mime_type.startswith('video/') %}<video controls preload="none" src="{{ m.url }}"></video>{% elif m.mime_type.startswith('audio/') %}<audio controls preload="none" src="{{ m.url }}"></audio>{% else %}<img src="{{ m.url }}" loading="lazy" alt="記録の添付写真">{% endif %}
+<p class="muted">撮影：{{ m.captured_at|isotime }} · {{ m.bytes|size }}</p>{{ media_facts(m.technical_info) }}
+{% if m.mime_type.startswith(('video/', 'audio/')) and not m.technical_info %}<p class="muted">長さなどは、<a href="{{ row.url }}">記録の画面</a>から取得できます。</p>{% endif %}
+{% else %}<p class="muted">{{ '削除済み' if m.status=='deleted' else '処理中・期限切れ、または原本が見つかりません' }}</p>{% if m.technical_info %}<p class="muted">以前に取得した基本情報</p>{{ media_facts(m.technical_info) }}{% endif %}{% endif %}</div>{% else %}<p class="muted">添付はありません。</p>{% endfor %}</section>
+{% if row.legacy_notes %}<details><summary>以前の別欄の補足</summary>{% for note in row.legacy_notes %}{% if note.source=='comment' %}<p class="preserve">{{ note.body }}{% if note.body_truncated %}…{% endif %}</p>{% else %}<p class="preserve">{{ note.owner_action }}{% if note.owner_action_truncated %}…{% endif %}</p><p class="preserve">{{ note.cat_response }}{% if note.cat_response_truncated %}…{% endif %}</p>{% endif %}{% endfor %}<a href="{{ row.url }}">元の記録で全文を見る</a></details>{% endif %}
+{% if row.omitted.values()|sum %}<p class="muted">関連情報の一部は件数の上限で省略されています。<a href="{{ row.url }}">元の記録</a>も確認してください。</p>{% endif %}
+</article>{% endfor %}
+</div>
+<details class="card"><summary>この資料をAIなどで使うとき</summary><p>{{ report.scope_notice }}</p><p>{{ report.data_notice }}</p><p>JSONは自分のMacに保存できます。アプリから外部サービスへの自動送信はありません。</p></details>
+{% endif %}
+{% endblock %}

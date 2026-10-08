@@ -2,7 +2,7 @@
 
 ## 実装状況
 
-初版のローカル実装を追加した。起動方法と検証結果はREADME.md、処理の説明はdocs/learning.mdを参照。実際のiPhone動画の確認は未完了。
+初版はMacBookのlocalhostで動く。ブラウザとローカルCLIで投稿・追記・保管変更を行い、週の振り返りと選んだ観察の比較資料を利用できる。起動方法と検証範囲はREADME.md、処理の説明はdocs/learning.mdを参照。実際のiPhone由来MOVの保存とChromeでの映像読み込みを確認したが、4K・120fps/HDRの色・向き・音声・全編再生の検証は未完了。
 
 ## 目的と範囲
 
@@ -35,7 +35,7 @@ Python、HTTPとAPI、SQL、RDB設計、Dockerを学ぶことも目的とする�
 ~/Movies/project-meme/
   inbox/                          AirDrop受領後に手動で置く取り込み元
   media/                          アプリが保存した添付
-  staging/                        取り込み途中の一時ファイル
+    staging/                      取り込み途中の一時ファイル
 ~/Library/Application Support/project-meme/
   backups/                        手動バックアップの暫定出力先
 ```
@@ -66,7 +66,7 @@ Dockerにはmediaをbind mountし、その配下のstagingを一時保存に使�
 
 - ホーム：最近の声・行動、体調日記、新しい記録への入口。
 - 声・行動：添付、日時、状況、そのときの様子・前後のメモ、編集・削除、予想。初期状況タグは食事前、ドアの前、遊び、帰宅、触れている、その他。DBのテーブル名は observations のまま。
-- 記録一覧・詳細：日付、状況タグ、文字による検索と振り返り。検索はメモと、旧画面で保存済みの補足の両方。
+- 記録一覧・詳細：日付、状況タグ、文字による検索と振り返り。検索はメモと、旧画面で保存済みの補足の両方。実観察を1〜5件選び、全文メモ・予想と根拠・添付を比較できる。
 - メメ辞書：予想、こちらから伝える合図、関連する声・行動。画面の評価は、合っていそう、合わなそう、まだ分からない。予想であることを明示する。
 - 体調日記：食事、水、トイレ、嘔吐、体重、元気、その他。程度の欄は元気さと呼び、種類の「元気」と分ける。日付の絞り込み、CSV、印刷用表示。
 - 保存管理：プロフィール、容量、期限が近い添付、保存期間、「残す」、全データ出力、個別削除・全削除。
@@ -109,7 +109,7 @@ HTTPルート、入力モデル、保存処理、添付処理、期限・CSV処�
 | dictionary_items | id, cat_id, kind, title, hypothesis?, cue?, notes | 継続して検討する仮説・合図を、個々の出来事から分ける |
 | dictionary_evidence | dictionary_item_id, observation_id, assessment, rationale? | 仮説と観察の多対多。支持・不一致・未判断は観察ごとに異なる |
 | health_entries | id, cat_id, occurred_at, timezone, event_type, count?, weight_value?, weight_unit?, meal_interval_minutes?, appetite?, energy?, details?, is_sample, submission_key, submission_hash, deletion_requested_at? | 体重や回数を型付きで扱い、観察とは異なる入力規則と出力を持つ |
-| media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type?, bytes?, reserved_bytes, upload_key, captured_at?, captured_at_source, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count, next_retry_at?, last_error_code? | 複数添付と、本文とは独立した容量・期限・削除を管理する |
+| media | id, observation_id?, health_entry_id?, storage_key, original_name, mime_type?, bytes?, reserved_bytes, upload_key, captured_at?, captured_at_source, technical_info?, status, retention_started_at?, expires_at?, keep, deleted_at?, deletion_reason?, retry_count, next_retry_at?, last_error_code? | 複数添付と、本文とは独立した容量・期限・削除を管理する |
 
 `?`は任意項目。通常の実体テーブルはBIGINTの主キーとcreated_at・updated_atを持つ。関連表は組み合わせを主キーにし、評価の変更を追えるようdictionary_evidenceにもcreated_at・updated_atを持たせる。初版は完全な編集履歴を保存せず、重要な新しい解釈は元の仮説を上書きせず別項目として登録する。追記管理表はUUIDのoperation_keyを主キーとし、created_atを持つ。本文や編集履歴を複製する表ではない。IDや送信キーは認可の代用にしない。
 
@@ -176,7 +176,7 @@ readyになった時点から保存期間を計算する。pendingではbytes・
 
 ## ベクトル検索とAI
 
-初版は日付・タグ・文字で検索する。後続でpgvectorをPostgreSQLへ追加し、まず文章を埋め込みに変換して意味が似た記録を検索する。音声・動画の特徴による検索はその後に検討する。別のベクトルDBは初版では導入しない。
+初版は日付・タグ・文字で検索し、明示した観察を比較資料として取り出す。後続でpgvectorをPostgreSQLへ追加する場合は、まず文章を埋め込みに変換して意味が似た記録を検索する。音声・動画の特徴による検索はその後に検討する。別のベクトルDBは初版では導入しない。
 
 ベクトル検索は類似記録の発見を助ける機能であり、意図の確定、自己学習、類似度からの確率表示には使わない。埋め込みには使用モデルとバージョンを記録する。モデル、費用、ローカル処理、外部送信の対象と同意は導入時に決める。飼い主の仮説を正解データとみなさない。
 
@@ -339,3 +339,57 @@ JSONの保管APIは値を反転せず、trueで保管、falseで解除する。�
 
 
 通常のURLエンコードされたHTMLフォームは128KiBまで受信し、フォーム解析のフィールド上限も128KiBとする。日本語・絵文字のエンコード後も1万文字の有効なメモを受け付けるための上限で、各項目の文字数・型・個数の検証は維持する。JSON APIは従来の64KiB、添付の容量制限は変更しない。
+
+
+## 観察の比較と動画・音声の仕様（2026-10-08）
+
+比較は新しい記録入力を求めず、既存のメモ・関連・添付を取り出す機能とする。一覧のチェックボックスと詳細のリンクから、`GET /compare?ids=123,124`へ進む。`GET /api/analysis/observations`と`scripts/analyze.py --ids 123 124`は同じ資料のJSONを返す。Codex以外のローカル実行可能なアシスタントも利用でき、アプリ内に特定のAIサービスへの接続は追加しない。
+
+対象IDはASCIIの正整数をカンマで区切った1〜5件、重複不可、BIGINTの正の範囲。選択順を保つ。全対象についてcat=1・実記録・削除中でないことを先に確認し、一件でも対象外なら404で資料全体を拒否する。入力の型・範囲・個数の不正は422とし、黙って一部だけを比較しない。
+
+`app/analysis.py`は呼び出し側のREPEATABLE READ・READ ONLYトランザクションから資料を作る。全文メモ・revision・日時・場所・タグ、予想と飼い主の評価・理由、旧Comment/Interactionの出典、添付履歴を返す。タグ20件、予想30件、旧補足合計20件、添付履歴50件を観察ごとの上限とし、省略件数を付ける。通常メモは縮めない。予想・評価理由・旧補足などの長文は1000文字までのプレビューと省略フラグにし、元の記録へのリンクを残す。JSON全体は900KBまでで、超過時は413として対象を減らすよう案内する。
+
+添付には状態と閲覧可能かを示す。URLは有効なreadyで期限内またはkeepがtrue、かつ通常ファイルが現存する添付だけに付ける。保存キー、送信キー、ローカル絶対パス、秘密は返さない。技術情報は仕様を再検証した既存キャッシュを読み、GETから解析プロセスを起動しない。元ファイルがなくても取得済みの仕様は保存された情報として返し、現在の原本を確認したようには扱わない。
+
+### technical_infoをJSONBへ保存する理由
+
+`media.technical_info`はNULLを許すJSONB列。初期形式は`version: 1`、長さ（秒）、映像のcodec・width・height・fps、音声のcodec・channels・sample_rateだけを持つ。欠落・不正・非有限値は未取得として扱い、GPS・任意タグ・ファイルパス・生のffprobe出力を保存しない。新しい添付の内容検証時に得たJSONから必要な仕様を抽出し、readyの確定と一緒に保存する。
+
+これは添付一件から導く小さな仕様のキャッシュ。映像と音声で存在する項目が異なり、抽出形式をversionで変更できるためJSONBへまとめる。観察・予想・根拠・健康記録は引き続き通常のテーブルで管理し、親との関連・状態・容量・日時・期限は列と外部キー・制約で守る。JSONBに正しいJSONが入っていても業務上の型や値は保証されないので、抽出時・表示時の両方で許可項目と値を確認する。[PostgreSQLのJSON型](https://www.postgresql.org/docs/current/datatype-json.html)を参照する。
+
+既存添付への補充は明示的なPOSTで行う。ブラウザはCSRF付きフォームの`POST /media/{id}/info`、ローカルAPIは`POST /api/media/{id}/info`へ空のJSONオブジェクトを送る。親・添付の状態と期限・種別・実ファイルを検証し、未取得の有効な動画または音声だけを解析する。キャッシュがあれば再解析しない。本文・出来事日時・撮影日時・保管設定・原本を変更せず、期限切れの添付を復活させない。通常のOrigin/CSRF検証を必須とする。
+
+ffprobeはサーバーが決めた保存パスを、固定の引数配列・ローカルfileプロトコル・許可したデマルチプレクサで処理する。15秒・標準出力131072バイト・12ストリームを上限とし、超過でも子プロセスを回収する。画像はサーバーで3000万画素の上限を確認する。コマンド・任意のURL・解析オプションを利用者から受け取らない。[ffprobeの項目選択とJSON出力](https://ffmpeg.org/ffprobe.html)を参照する。
+
+### 分析として扱う範囲
+
+資料には「動画の仕様」「飼い主が書いた観察」「飼い主の解釈」を別の出典として残す。動画・音声の内容認識や鳴き声の数・意図・感情・診断は出さず、`analysis_performed: false`を付ける。本文はAIへの指示や書き込み操作の権限にはしない。外部送信・予想評価の更新・keepの変更を分析の副作用にしない。
+
+当面は、似た状況の記録を少数選び、共通する前後の出来事・異なる反応・反対の例・不明な部分を出典付きで整理する。未記録を正常やゼロ、支持評価の割合を意図の確率と解釈しない。音量・ピッチには人声やテレビ・雑音も含まれるため、音響分析や行動認識を加える際は対象区間、検証用データ、モデルと版、資源制限、原本と結果の保管方針を先に定める。
+
+重点検証は全文と入力順、飼い主の評価保持、旧補足の出典、対象外の全体拒否、件数と出力量、期限・削除・ファイル欠損、JSONの型、GETでのDB不変、正当な仕様取得と不正な入力・CSRFの拒否とする。実記録の変更や個人動画のGit追加をテストに使わない。
+
+## 継続するセキュリティ監査（2026-10-08）
+
+`requirements.txt`は直接使うライブラリ、`requirements.lock`は推移依存を含むアプリの固定一覧、`requirements.security.lock`は監査ツールの固定一覧とする。両lockはSHA-256付きで、直接依存との整合性・重複・URLや追加indexなどの不正な指定を`scripts/security_check.py --check-lock`で検証する。アプリと監査ツールの導入は`--require-hashes`と`--only-binary=:all:`を使い、未知の配布物やソース配布物のビルドを混ぜない。[pipの安全なインストール](https://pip.pypa.io/en/stable/topics/secure-installs/)を参照する。
+
+監査は使い捨てDockerの非特権ユーザーで実行し、読み取り専用で渡すのは検証済みlock内容だけ。アプリのコード・.env・記録・メディアはマウントしない。外部へ照会するのは公開パッケージ名・バージョン。CPU・メモリ・プロセス数・時間を制限し、中断時も当該コンテナを片付ける。アプリ用と監査ツール用を両方調べ、既知の脆弱性・通信失敗・監査未完了をチェック失敗にする。自動修正・自動マージは追加しない。
+
+SecurityワークフローはPR・mainへのpush・手動実行・毎週月曜03:23 UTC（12:23 JST）のscheduleを入口とする。定期実行はdefault branch上で動き、開始が遅れることもある。[GitHubのschedule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)を参照する。DB統合テスト・HTTP確認・復元検証は従来のCIで継続し、ローカルへの更新はバックアップ付きのupdate.pyで行う。
+
+Python依存監査はOS・FFmpegの既知の問題やアプリの権限・業務処理を網羅しない。コンテナのベースと配布経路の固定・更新、ファイル解析の制限、正常な操作と不正拒否を対にしたテストを併用する。[pip-auditの対象範囲](https://github.com/pypa/pip-audit)を参照する。最新の実行結果と未確認事項はPRまたは検証記録へ残し、検査の成功を安全の保証にしない。
+
+
+### コンテナOSの検査と実行上限
+
+`scripts/container_check.py`は固定digestのTrivyで、アプリ・DBイメージのOSパッケージを調べる。引数なしでは現在のDockerfileから一時イメージを作り、`--image`は既存のローカルイメージを対象とする。`--database`は通常ファイルのcompose.yamlから固定digestの公式PostgreSQL 18参照だけを取り出し、pullしてイメージを検査する。DBコンテナやDBボリュームは使わず、設定の変数展開は行わない。イメージはdocker saveでローカルのアーカイブへ固定し、更新48時間以内の脆弱性DBを取得した後、ネットワークなしの検査用コンテナで読み取る。Dockerソケット・.env・個人メディア・DBを検査コンテナへ渡さない。
+
+修正版のあるHIGH／CRITICALは失敗にし、修正版がないHIGH／CRITICALの件数も表示する。低い重大度や未修正の検出が残る場合があるため、成功を「脆弱性なし」と解釈しない。古い脆弱性DB、対象OSが確認できない・サポート切れ、検査失敗、容量超過は未完了として拒否する。検査用コンテナ・一時イメージ・アーカイブを整理し、取得できない情報をゼロ扱いにしない。[Trivyの対象と脆弱性検査](https://trivy.dev/docs/latest/scanner/vulnerability/)を参照する。
+
+アプリのベースはPython 3.13のDebian Trixieをdigestで固定し、OS更新とffmpeg導入をビルド時に行う。Composeの通常・テストのアプリサービスにはメモリ2GB・CPU 2・プロセス128の上限を設ける。Python監査・OS検査・ファイル解析の時間/出力制限・DB整合性のテストはそれぞれ別の境界を検証し、相互の代替として扱わない。
+
+### ローカル更新の検査とDBイメージ
+
+update.pyはテスト・Python依存監査・候補アプリのOS監査・更新先DBイメージのOS監査を、稼働中アプリの停止前に行う。検査の失敗・中断でDB操作へ進まない。検査後にアプリ停止とバックアップを行い、DBサービスだけを同じPostgreSQL 18・Bookwormの更新イメージで起動してhealthを確認し、Alembicとweb更新へ進む。DB更新開始後の失敗では自動で旧アプリを再開せず、バックアップとupdate.jsonの段階を残す。
+
+今回のDB環境はBookwormを維持する。glibcやICUの世代変更は照合順序へ影響するため、TrixieへのDB切り替えは別の移行計画で扱う。照合順序が変わる場合は依存インデックスの再構築後にバージョンを更新する。[PostgreSQLの照合順序のバージョン管理](https://www.postgresql.org/docs/current/sql-altercollation.html)を参照する。

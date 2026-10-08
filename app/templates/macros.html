@@ -1,1 +1,9 @@
 {% macro token(csrf) %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
+
+{% macro media_facts(info) %}
+{% if info %}<dl class="media-facts">
+{% if info.duration_seconds is not none %}<dt>長さ</dt><dd>{{ info.duration_seconds }} 秒</dd>{% endif %}
+{% if info.video %}<dt>動画</dt><dd>{{ 'HEVC' if info.video.codec=='hevc' else 'H.264' }}{% if info.video.width and info.video.height %} · {{ info.video.width }} × {{ info.video.height }}{% endif %}{% if info.video.fps %} · {{ info.video.fps }} fps{% endif %}</dd>{% endif %}
+<dt>音声</dt><dd>{% if info.audio %}{{ info.audio.codec|upper }}{% if info.audio.sample_rate %} · {{ info.audio.sample_rate }} Hz{% endif %}{% if info.audio.channels %} · {{ info.audio.channels }} ch{% endif %}{% else %}確認できた音声トラックなし{% endif %}</dd>
+</dl>{% endif %}
+{% endmacro %}

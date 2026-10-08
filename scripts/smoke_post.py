@@ -17,10 +17,15 @@ def main():
         root = Path(directory)
         photo = root / 'test.png'
         Image.new('RGB', (8, 8), 'orange').save(photo)
+        video = root / 'test.mp4'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+            'color=c=green:s=128x96:r=30', '-t', '0.2', '-c:v', 'libx264',
+            '-threads:v', '1', '-pix_fmt', 'yuv420p', str(video)],
+            check=True, capture_output=True, timeout=15)
         draft = root / 'draft.json'
         draft.write_text(json.dumps({'kind': 'observation', 'entry': {
             'submission_key': str(uuid.uuid4()), 'occurred_at': '2030-01-01T12:00:00+09:00',
-            'description': '自動テストの架空記録。'}, 'guesses': ['preset:attention'], 'media': [{'path': str(photo), 'keep': True}]}))
+            'description': '自動テストの架空記録。'}, 'guesses': ['preset:attention'], 'media': [{'path': str(photo), 'keep': True}, {'path': str(video)}]}))
         command = [sys.executable, 'scripts/post.py', str(draft), '--submit']
         first = subprocess.run(command, check=True, capture_output=True, text=True).stdout
         second = subprocess.run(command, check=True, capture_output=True, text=True).stdout
@@ -52,7 +57,17 @@ def main():
         assert any(row['url'] == url for row in report['observations'])
         assert any(item['title'] == 'かまってほしい' and item['counts']['unknown'] >= 1
                    for item in report['hypotheses'])
-    print('Codex投稿コマンド: 実HTTPで本文・予想・添付・保管指定・追記・再送・画面表示を確認しました。')
+        comparison = json.loads(subprocess.run([sys.executable, 'scripts/analyze.py', '--ids', str(oid)],
+            check=True, capture_output=True, text=True).stdout)
+        assert comparison['base_url'] == 'http://localhost:8000'
+        row = comparison['observations'][0]
+        assert row['description'] == after['description'] and row['revision'] == 2
+        assert row['guesses'][0]['assessment'] == 'unknown'
+        video_info = next(media['technical_info'] for media in row['media'] if media['original_name'] == 'test.mp4')
+        assert video_info['video']['codec'] == 'h264' and video_info['video']['width'] == 128
+        assert video_info['audio'] is None
+        assert '記録を比べる' in LocalClient(8000).request('GET', f'/compare?ids={oid}', json_body=False)
+    print('Codex投稿コマンド: 実HTTPで本文・予想・添付・保管指定・追記・再送・動画情報・比較CLI・画面表示を確認しました。')
 
 
 if __name__ == '__main__':

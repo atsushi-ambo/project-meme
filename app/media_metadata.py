@@ -3,18 +3,18 @@ import json
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from .processes import run_bounded
 
 
 def video_capture_time(path: Path, name: str):
     if Path(name).suffix.lower() not in {'.mov', '.mp4'}:
         return None
     command = ['ffprobe', '-v', 'error', '-protocol_whitelist', 'file',
-               '-format_whitelist', 'mov', '-show_entries',
+               '-format_whitelist', 'mov', '-max_streams', '12', '-show_entries',
                'format_tags=creation_time,com.apple.quicktime.creationdate',
                '-of', 'json', str(path)]
     try:
-        result = subprocess.run(command, capture_output=True, timeout=15, check=True)
-        tags = json.loads(result.stdout).get('format', {}).get('tags', {})
+        tags = json.loads(run_bounded(command)).get('format', {}).get('tags', {})
         # 撮影地のUTCオフセットを持つAppleの撮影日時を優先する。
         for key in ('com.apple.quicktime.creationdate', 'creation_time'):
             value = tags.get(key)
