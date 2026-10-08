@@ -239,7 +239,7 @@ def test_iphone_alternate_audio(tmp_path, monkeypatch, variant, accepted):
     result = subprocess.CompletedProcess([], 0, stdout=json.dumps({
         'streams': streams, 'format': {'format_name': 'mov,mp4,m4a,3gp,3g2,mj2'}
     }).encode())
-    monkeypatch.setattr(subprocess, 'run', lambda *args, **kwargs: result)
+    monkeypatch.setattr('app.media.run_bounded', lambda *args, **kwargs: result.stdout)
     if accepted:
         assert inspect_file(tmp_path/'video', 'iphone.MOV') == 'video/quicktime'
     else:
@@ -259,7 +259,7 @@ def test_iphone_alternate_audio(tmp_path, monkeypatch, variant, accepted):
 def test_capture_metadata(tmp_path,monkeypatch,tags,expected):
     from app.media_metadata import video_capture_time
     result=subprocess.CompletedProcess([],0,stdout=json.dumps({'format':{'tags':tags}}))
-    monkeypatch.setattr(subprocess,'run',lambda *a,**kw:result)
+    monkeypatch.setattr('app.media_metadata.run_bounded',lambda *a,**kw:result.stdout)
     value=video_capture_time(tmp_path/'video','sample.MOV')
     assert (value.isoformat() if value else None)==expected
 
@@ -267,7 +267,7 @@ def test_capture_metadata(tmp_path,monkeypatch,tags,expected):
 def test_capture_metadata_failure(tmp_path,monkeypatch):
     from app.media_metadata import video_capture_time
     def timeout(*args,**kwargs): raise subprocess.TimeoutExpired('ffprobe',15)
-    monkeypatch.setattr(subprocess,'run',timeout)
+    monkeypatch.setattr('app.media_metadata.run_bounded',timeout)
     assert video_capture_time(tmp_path/'video','sample.mov') is None
 
 
@@ -584,3 +584,50 @@ def test_review_snapshot_stays_consistent_and_rejects_writes(client):
             snapshot.execute(text("UPDATE observations SET location='変更不可'"))
     with transaction() as db:
         assert db.scalar(select(Observation.location)) == ''
+
+
+@pytest.mark.parametrize('bad', ['ねこ', 'é' * 64, '', 'a' * 63, 'a' * 65])
+def test_invalid_csrf_form_is_forbidden_without_internal_error(client, bad):
+    result = client.post('/profile', data={'csrf': bad, 'name': '変更されない'},
+        headers={'Origin': 'http://localhost:8000'})
+    assert result.status_code == 403
+
+
+def test_non_ascii_api_csrf_header_and_signed_cookie_are_rejected(client):
+    from app.security import signer, read_token
+    assert read_token(signer.dumps('ね' * 64)) is None
+    response = client.post('/api/media/reserve', json={}, headers=[
+        (b'origin', b'http://localhost:8000'), (b'x-csrf-token', b'\xe9' * 64)])
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize('value', ['0001-01-01T00:00:00+09:00', '9999-12-31T23:59:59-09:00',
+    '9999-12-31T23:00:00+00:00'])
+def test_datetime_overflow_is_input_error_in_every_entry_point(client, value):
+    h = {'Origin': 'http://localhost:8000', 'X-CSRF-Token': csrf(client)}
+    for kind, data in [('observation', {'description': '範囲外'}), ('health', {'event_type': 'other'})]:
+        response = client.post('/api/entries/' + kind, json={**data, 'occurred_at': value,
+            'submission_key': str(uuid.uuid4())}, headers=h)
+        assert response.status_code == 422
+    oid = observation(client)
+    mid, result = upload(client, oid, png())
+    assert result.status_code == 200
+    assert post(client, f'/media/{mid}/captured-at', {'captured_at': value}).status_code == 422
+    response = client.post('/api/media/reserve', json={'parent_kind': 'observation', 'parent_id': oid,
+        'original_name': 'photo.png', 'size': len(png()), 'upload_key': str(uuid.uuid4()), 'captured_at': value}, headers=h)
+    assert response.status_code == 422
+    with transaction() as db:
+        assert db.get(Media, mid).captured_at is None
+
+
+@pytest.mark.parametrize('query', ['end=9999-12-31', 'start=0001-01-01', 'tag=9223372036854775808', 'tag=-1'])
+def test_filter_overflow_and_invalid_ids_are_input_errors(client, query):
+    assert client.get('/observations?' + query).status_code == 422
+
+
+@pytest.mark.parametrize('id', [0, -1, 9223372036854775808])
+def test_legacy_route_ids_are_bounded_before_db_queries(client, id):
+    for url in [f'/entries/observation/{id}', f'/entries/observation/{id}/edit', f'/dictionary/{id}', f'/media/{id}']:
+        assert client.get(url).status_code == 422
+    assert post(client, f'/observations/{id}/comment', {'body': '拒否'}).status_code == 422
+    assert post(client, f'/media/{id}/keep', {}).status_code == 422

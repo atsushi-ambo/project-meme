@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import uuid
+import warnings
 from datetime import timedelta
 from pathlib import Path
 import anyio
@@ -18,6 +19,8 @@ from .db import transaction, engine
 from .models import Cat, Media, Observation, Health, DictionaryItem, now
 from .services import parent
 from .media_metadata import video_capture_time
+from .processes import run_bounded
+from .media_info import summarize_probe, technical_summary
 
 Image.MAX_IMAGE_PIXELS = 30_000_000
 
@@ -77,26 +80,32 @@ def set_keep(db, id, value=None):
     return row
 
 
-def inspect_file(path, name):
+def inspect_file(path, name, *, details=False):
     suffix = Path(name).suffix.lower()
     if suffix in {'.jpg','.jpeg','.png'}:
         try:
-            with Image.open(path) as image:
-                if image.format not in {'JPEG','PNG'}:
-                    raise ValueError('format')
-                image.verify()
-                return 'image/jpeg' if image.format == 'JPEG' else 'image/png'
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', Image.DecompressionBombWarning)
+                with Image.open(path) as image:
+                    if (image.format not in {'JPEG','PNG'}
+                            or image.width * image.height > Image.MAX_IMAGE_PIXELS):
+                        raise ValueError('format_or_pixels')
+                    image.verify()
+                    mime = 'image/jpeg' if image.format == 'JPEG' else 'image/png'
+                    return (mime, None) if details else mime
         except Exception:
             raise HTTPException(415, '画像の内容を確認できません。JPEG/PNGを選んでください。')
     if suffix not in {'.mov','.mp4','.m4a','.mp3','.wav'}:
         raise HTTPException(415, '対応形式はMOV/MP4（HEVC・H.264）、JPEG/PNG、M4A/MP3/WAVです。')
     # 固定のローカルパスのみ。ネットワークプロトコルやプレイリストを許可しない。
-    command = ['ffprobe','-v','error','-protocol_whitelist','file','-format_whitelist','mov,mp3,wav',
-        '-show_entries','stream=codec_type,codec_name,codec_tag_string:stream_disposition=default:format=format_name,duration','-of','json', str(path)]
+    command = ['ffprobe','-v','error','-protocol_whitelist','file','-format_whitelist','mov,mp3,wav', '-max_streams', '12',
+        '-show_entries','stream=codec_type,codec_name,codec_tag_string,width,height,avg_frame_rate,r_frame_rate,channels,sample_rate:stream_disposition=default:format=format_name,duration','-of','json', str(path)]
     try:
-        result = subprocess.run(command, capture_output=True, timeout=15, check=True)
-        info = json.loads(result.stdout)
+        info = json.loads(run_bounded(command))
+        if not isinstance(info, dict): raise ValueError('probe_shape')
         streams = info.get('streams', [])
+        if not isinstance(streams, list) or any(not isinstance(row, dict) for row in streams):
+            raise ValueError('stream_shape')
         video = [s for s in streams if s.get('codec_type') == 'video']
         audio = [s for s in streams if s.get('codec_type') == 'audio']
         if len(streams) > 12 or not (video or audio):
@@ -117,15 +126,42 @@ def inspect_file(path, name):
                     and stream.get('disposition', {}).get('default') == 0):
                 continue
             raise ValueError('audio_codec')
+        mime = None
         if video and suffix in {'.mov','.mp4'} and 'mov' in fmt:
-            return 'video/mp4' if suffix == '.mp4' else 'video/quicktime'
-        if not video and audio:
-            if suffix == '.m4a' and 'mov' in fmt: return 'audio/mp4'
-            if suffix == '.mp3' and 'mp3' in fmt: return 'audio/mpeg'
-            if suffix == '.wav' and 'wav' in fmt: return 'audio/wav'
-        raise ValueError('container')
-    except (ValueError, KeyError, subprocess.SubprocessError):
+            mime = 'video/mp4' if suffix == '.mp4' else 'video/quicktime'
+        elif not video and audio:
+            if suffix == '.m4a' and 'mov' in fmt: mime = 'audio/mp4'
+            if suffix == '.mp3' and 'mp3' in fmt: mime = 'audio/mpeg'
+            if suffix == '.wav' and 'wav' in fmt: mime = 'audio/wav'
+        if mime is None: raise ValueError('container')
+        return (mime, summarize_probe(info)) if details else mime
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         raise HTTPException(415, '形式を確認できません。HEVC/H.264の動画または対応音声を選んでください。')
+
+def inspect_saved(db, id):
+    """既存添付の明示したPOSTだけで抽出。原本・メモ・保管期限を変えない。"""
+    row = db.get(Media, id)
+    if not row:
+        raise HTTPException(404, '添付がありません。')
+    kind = 'observation' if row.observation_id else 'health'
+    entry_id = row.observation_id or row.health_entry_id
+    parent(db, kind, entry_id, True)
+    row = db.scalar(select(Media).where(Media.id == id).with_for_update(nowait=True)
+        .execution_options(populate_existing=True))
+    if not row or row.status != 'ready' or (not row.keep and row.expires_at <= now()):
+        raise HTTPException(409, '添付は処理中・削除済み、または期限切れです。')
+    if not row.mime_type.startswith(('video/', 'audio/')):
+        raise HTTPException(422, '動画・音声の添付を指定してください。')
+    path, _ = paths(row.storage_key)
+    if not path.is_file() or path.is_symlink():
+        raise HTTPException(404, '添付が見つかりません。')
+    if technical_summary(row.technical_info) is None:
+        mime, info = inspect_file(path, row.original_name, details=True)
+        if mime != row.mime_type:
+            raise HTTPException(409, '保存後に添付が変更されています。')
+        row.technical_info = info
+    return row
+
 
 class Upload:
     """一件の受信中だけDBロックを保持。別スレッドから同時には使用しない。"""
@@ -163,7 +199,7 @@ class Upload:
         self.file.flush()
         os.fsync(self.file.fileno())
         self.file.close()
-        mime = inspect_file(self.temp, self.row.original_name)
+        mime, technical = inspect_file(self.temp, self.row.original_name, details=True)
         if self.row.captured_at is None:
             captured = video_capture_time(self.temp, self.row.original_name)
             if captured is not None:
@@ -171,6 +207,7 @@ class Upload:
                 self.row.captured_at_source = 'metadata'
         os.replace(self.temp, self.final)
         self.row.mime_type, self.row.bytes = mime, self.size
+        self.row.technical_info = technical
         self.row.status = 'ready'
         self.row.retention_started_at = now()
         self.row.expires_at = now() + timedelta(days=settings.retention_days)

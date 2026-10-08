@@ -20,22 +20,37 @@ def updater(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize('failure', [None, 'test', 'build', 'backup', 'migrate', 'health', 'interrupt'])
+@pytest.mark.parametrize('failure', [None, 'test', 'python_audit', 'build', 'os_audit',
+                                     'database_audit', 'backup', 'database_update',
+                                     'migrate', 'health', 'interrupt', 'database_interrupt'])
 def test_delivery_failure_boundaries(updater, tmp_path, failure):
     events = []
     dest = tmp_path / 'snapshot'
     def command(args, image=None, **kwargs):
-        if args[0] == sys.executable: stage = 'test'
+        if args[0] == sys.executable:
+            stage = {'test.py': 'test', 'security_check.py': 'python_audit',
+                     'container_check.py': 'database_audit' if args[-1] == '--database'
+                     else 'os_audit'}[Path(args[1]).name]
         elif 'build' in args: stage = 'build'
         elif 'migrate' in args: stage = 'migrate'
-        elif 'up' in args: stage = 'health'
+        elif 'up' in args: stage = 'database_update' if args[-1] == 'db' else 'health'
         elif 'start' in args: stage = 'restart'
         elif 'stop' in args: stage = 'stop'
         else: stage = 'tag'
         events.append(stage)
         if stage == failure: raise subprocess.CalledProcessError(1, args)
         if failure == 'interrupt' and stage == 'migrate': raise KeyboardInterrupt()
-        if stage in ('build', 'migrate', 'health'): assert image.startswith('project-meme:update-')
+        if failure == 'database_interrupt' and stage == 'database_update': raise KeyboardInterrupt()
+        if stage in ('build', 'database_update', 'migrate', 'health'):
+            assert image.startswith('project-meme:update-')
+        if stage == 'database_update':
+            assert args == ['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
+                            '--wait-timeout', '90', 'db']
+            assert json.loads((dest / 'update.json').read_text())['stage'] == 'database_update_started'
+        if stage == 'os_audit':
+            assert args[2] == '--image'
+            assert args[3].startswith('project-meme:update-')
+            assert image is None
         return SimpleNamespace(stdout='container\n')
     def snapshot(path, restart, runner):
         assert restart is False
@@ -48,17 +63,68 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
             updater.deliver(command, snapshot, dest, 'revision', 'old-image')
     else:
         updater.deliver(command, snapshot, dest, 'revision', 'old-image')
-        assert events == ['test', 'tag', 'build', 'backup', 'migrate', 'health', 'tag']
+        assert events == ['test', 'python_audit', 'tag', 'build', 'os_audit',
+                          'database_audit', 'backup', 'database_update', 'migrate', 'health', 'tag']
         assert json.loads((dest / 'update.json').read_text())['stage'] == 'complete'
-    if failure in ('test', 'build'):
+    if failure in ('test', 'python_audit', 'build', 'os_audit', 'database_audit'):
         assert not dest.exists()
         assert 'stop' not in events and 'restart' not in events
     if failure == 'backup':
         assert events[-1] == 'restart'
         assert 'migrate' not in events
+    if failure in ('database_update', 'database_interrupt'):
+        assert events[-1] == 'stop' and 'restart' not in events and 'migrate' not in events
+        assert json.loads((dest / 'update.json').read_text())['stage'] == 'failed_after_database_update_started'
+        assert json.loads((dest / 'manifest.json').read_text())['complete']
     if failure in ('migrate', 'health', 'interrupt'):
         assert events[-1] == 'stop' and 'restart' not in events
         assert json.loads((dest / 'update.json').read_text())['stage'] == 'failed_after_migration_started'
+
+
+@pytest.mark.parametrize('failure', ['python_audit', 'os_audit', 'database_audit'])
+def test_security_gate_preserves_existing_app_and_backup(updater, tmp_path, failure):
+    """検査対象は候補そのもの。検査失敗で既存アプリや既存バックアップに触れない。"""
+    dest = tmp_path / 'existing-backup'
+    dest.mkdir()
+    sentinel = dest / 'update.json'
+    sentinel.write_text('{"previous_backup": true}')
+    calls = []
+    candidate = None
+
+    def command(args, image=None, **kwargs):
+        nonlocal candidate
+        calls.append((args, image))
+        if args[:3] == ['compose', 'build', 'web']:
+            candidate = image
+        if args[0] == sys.executable:
+            script = Path(args[1]).name
+            if script == 'container_check.py':
+                assert candidate is not None
+                if args[-1] == '--database':
+                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'), '--database']
+                    stage = 'database_audit'
+                else:
+                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'),
+                                    '--image', candidate]
+                    stage = 'os_audit'
+            else:
+                stage = 'python_audit' if script == 'security_check.py' else 'test'
+            if stage == failure:
+                raise subprocess.CalledProcessError(2, args)
+        return SimpleNamespace(stdout='')
+
+    def snapshot(*args, **kwargs):
+        pytest.fail('検査に失敗した更新でバックアップを開始した')
+
+    with pytest.raises(subprocess.CalledProcessError):
+        updater.deliver(command, snapshot, dest, 'revision', 'old-image')
+    assert sentinel.read_text() == '{"previous_backup": true}'
+    assert sorted(path.name for path in dest.iterdir()) == ['update.json']
+    assert not any(args[0] == 'compose' and args[1] != 'build' for args, _ in calls)
+    if failure == 'python_audit':
+        assert [Path(args[1]).name for args, _ in calls] == ['test.py', 'security_check.py']
+    else:
+        assert candidate is not None
 
 
 @pytest.mark.parametrize('inside', ['media', 'repo'])

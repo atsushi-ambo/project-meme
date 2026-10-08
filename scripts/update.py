@@ -1,4 +1,4 @@
-"""チェックアウト済みコードを、テスト・バックアップ後にローカルへ反映する。"""
+"""テスト・依存監査・イメージ監査後、バックアップしてローカルへ反映する。"""
 from datetime import datetime
 import fcntl
 import json
@@ -20,24 +20,38 @@ def deliver(command, snapshot, destination, revision, previous):
     recovery = 'project-meme:before-' + destination.name
     record = {'revision': revision, 'previous_image': previous,
               'candidate_image': candidate, 'recovery_image': recovery}
+    database_update_started = False
     migration_started = False
     stopped = False
     try:
-        print('1/5 隔離環境でテストします。', flush=True)
+        print('1/9 隔離環境でテストします。', flush=True)
         command([sys.executable, str(ROOT / 'scripts/test.py')])
-        print('2/5 新しいイメージを準備します。', flush=True)
+        print('2/9 Python依存の脆弱性を監査します。', flush=True)
+        command([sys.executable, str(ROOT / 'scripts/security_check.py')])
+        print('3/9 新しいイメージを準備します。', flush=True)
         command(['docker', 'image', 'tag', previous, recovery])
         command(['compose', 'build', 'web'], image=candidate)
-        print('3/5 アプリを止めてバックアップします。', flush=True)
+        print('4/9 新しいイメージのOS脆弱性を監査します。', flush=True)
+        command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate])
+        print('5/9 更新先DBイメージのOS脆弱性を監査します。', flush=True)
+        command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--database'])
+        # 検査の不合格・中断時は、この先のアプリ停止やDB操作へ進まない。
+        print('6/9 アプリを止めてバックアップします。', flush=True)
         stopped = True
         snapshot(destination, restart=False,
                  runner=lambda args, **kw: command(['compose', *args], image=previous, **kw))
         record['stage'] = 'backed_up'
         (destination / 'update.json').write_text(json.dumps(record, indent=2))
-        print('4/5 DB構造を更新します。', flush=True)
+        print('7/9 同じPostgreSQL世代のDBイメージへ更新します。', flush=True)
+        database_update_started = True
+        record['stage'] = 'database_update_started'
+        (destination / 'update.json').write_text(json.dumps(record, indent=2))
+        command(['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
+                 '--wait-timeout', '90', 'db'], image=candidate)
+        print('8/9 DB構造を更新します。', flush=True)
         migration_started = True
         command(['compose', 'run', '--rm', '--no-deps', '-T', 'migrate'], image=candidate)
-        print('5/5 起動とDB接続を確認します。', flush=True)
+        print('9/9 起動とDB接続を確認します。', flush=True)
         command(['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
                  '--wait-timeout', '90', 'web'], image=candidate)
         command(['docker', 'image', 'tag', candidate, 'project-meme:local'])
@@ -45,13 +59,18 @@ def deliver(command, snapshot, destination, revision, previous):
         (destination / 'update.json').write_text(json.dumps(record, indent=2))
     except BaseException:
         if stopped:
-            if migration_started:
-                # 新DBと旧コードの互換性を仮定しない。自動復元で記録を失わせない。
+            if database_update_started or migration_started:
+                # DB更新が中断された場合も状態を仮定しない。自動復元で記録を失わせない。
                 command(['compose', 'stop', 'web'], image=previous)
             else:
                 command(['compose', 'start', 'web'], image=previous)
-        if destination.exists():
-            record['stage'] = 'failed_after_migration_started' if migration_started else 'failed_before_migration'
+        if stopped and destination.exists():
+            if migration_started:
+                record['stage'] = 'failed_after_migration_started'
+            elif database_update_started:
+                record['stage'] = 'failed_after_database_update_started'
+            else:
+                record['stage'] = 'failed_before_migration'
             (destination / 'update.json').write_text(json.dumps(record, indent=2))
         raise
     print(f'更新完了。バックアップ: {destination}', flush=True)

@@ -10,10 +10,18 @@ from .config import settings
 signer = URLSafeTimedSerializer(settings.secret_key, salt='meme-browser-csrf')
 COOKIE = 'meme_browser'
 
+def token_matches(supplied, expected):
+    # compare_digestのstr比較はASCIIのみ。外部入力を例外にせず拒否する。
+    return (isinstance(supplied, str) and isinstance(expected, str)
+            and len(supplied) == len(expected) == 64
+            and supplied.isascii() and expected.isascii()
+            and secrets.compare_digest(supplied, expected))
+
+
 def read_token(cookie):
     try:
         token = signer.loads(cookie, max_age=43200)
-        return token if isinstance(token, str) and len(token) == 64 else None
+        return token if isinstance(token, str) and len(token) == 64 and token.isascii() else None
     except (BadSignature, SignatureExpired, TypeError):
         return None
 
@@ -62,7 +70,7 @@ class SecurityMiddleware:
         upload = scope['path'].startswith('/api/media/') and scope['method'] == 'PUT'
         if upload or scope['path'].startswith('/api/'):
             supplied = headers.get(b'x-csrf-token', b'').decode('latin1')
-            if mutation and not secrets.compare_digest(supplied, token):
+            if mutation and not token_matches(supplied, token):
                 return await rejection('送信を確認できません。', 403)(scope, receive, send)
         # フォームの日本語・絵文字はURLエンコードで最大12倍になる。
         # 10000文字の正当なメモを受け付け、JSON/APIの上限は維持する。

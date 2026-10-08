@@ -1,20 +1,26 @@
 """ブラウザの入力はここで型・長さ・組み合わせを確認する。"""
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 JST = ZoneInfo('Asia/Tokyo')
+RecordId = Annotated[int, Field(ge=1, le=9223372036854775807)]
 
 def parse_time(value):
     if value in ('', None):
         return None
     if not isinstance(value, (str, datetime)):
         raise ValueError('日時はISO形式の文字列で指定してください。')
-    dt = datetime.fromisoformat(value) if isinstance(value, str) else value
-    return (dt.replace(tzinfo=JST) if dt.tzinfo is None else dt).astimezone(timezone.utc)
+    try:
+        dt = datetime.fromisoformat(value) if isinstance(value, str) else value
+        utc = (dt.replace(tzinfo=JST) if dt.tzinfo is None else dt).astimezone(timezone.utc)
+        utc.astimezone(JST)  # 保存できても画面の日本時間で表示できない値は拒否する。
+        return utc
+    except (ValueError, OverflowError):
+        raise ValueError('日時をUTCへ変換できません。対応範囲内の日時を指定してください。') from None
 
 class Input(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
@@ -23,7 +29,7 @@ class ObservationInput(Input):
     occurred_at: datetime
     location: str = Field(default='', max_length=200)
     description: str = Field(min_length=1, max_length=10000)
-    tags: list[int] = Field(default_factory=list, max_length=6)
+    tags: list[RecordId] = Field(default_factory=list, max_length=6)
     submission_key: UUID
     _time = field_validator('occurred_at', mode='before')(parse_time)
 
@@ -65,7 +71,7 @@ class DictionaryInput(Input):
 class InteractionInput(Input):
     acted_at: datetime | None = None
     owner_action: str = Field(default='', max_length=3000)
-    cue_item_id: int | None = None
+    cue_item_id: RecordId | None = None
     cat_response: str | None = Field(default=None, max_length=3000)
     responded_at: datetime | None = None
     _times = field_validator('acted_at','responded_at', mode='before')(parse_time)
@@ -84,13 +90,13 @@ class InteractionInput(Input):
         return self
 
 class EvidenceInput(Input):
-    dictionary_item_id: int
+    dictionary_item_id: RecordId
     assessment: Literal['supports','contradicts','unknown']
     rationale: str = Field(default='', max_length=3000)
 
 class ReserveInput(Input):
     parent_kind: Literal['observation','health']
-    parent_id: int
+    parent_id: RecordId
     original_name: str = Field(min_length=1, max_length=200, pattern=r'^[^\x00-\x1f/\\]+$')
     size: int = Field(gt=0)
     upload_key: UUID

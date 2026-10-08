@@ -1,0 +1,25 @@
+name: Container security
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 21 * * 0' # Monday 06:30 JST
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: container-security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  os-vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check OS packages in an isolated image archive
+        run: python3 scripts/container_check.py
+      - name: Check the pinned PostgreSQL OS packages
+        run: python3 scripts/container_check.py --database

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (BigInteger, Boolean, CheckConstraint, Column, Date, DateTime,
     ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.dialects.postgresql import JSONB
 
 def now():
     return datetime.now(timezone.utc)
@@ -131,6 +132,7 @@ class Media(Timestamps, Base):
     upload_key = Column(String(36), nullable=False, unique=True)
     captured_at = Column(DateTime(timezone=True))
     captured_at_source = Column(String(20), nullable=False, default='unknown')
+    technical_info = Column(JSONB(none_as_null=True))
     status = Column(String(20), nullable=False, default='pending')
     retention_started_at = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True))
@@ -142,6 +144,7 @@ class Media(Timestamps, Base):
     last_error_code = Column(String(40))
     __table_args__ = (
         CheckConstraint('(observation_id IS NULL) <> (health_entry_id IS NULL)', name='media_parent'),
+        CheckConstraint("technical_info IS NULL OR jsonb_typeof(technical_info) = 'object'", name='media_technical_object'),
         CheckConstraint("status IN ('pending','ready','failed','delete_pending','deleted')", name='media_status'),
         CheckConstraint('reserved_bytes >= 0 AND (bytes IS NULL OR bytes > 0)', name='media_size'),
         CheckConstraint("status <> 'ready' OR (bytes IS NOT NULL AND mime_type IS NOT NULL AND retention_started_at IS NOT NULL AND expires_at IS NOT NULL)", name='media_ready'),
