@@ -1,0 +1,12 @@
+# Default gitleaks rules, plus one narrow exception for documentation.
+[extend]
+useDefault = true
+
+# README API examples use random UUIDs as idempotency keys. They are not
+# credentials, but match the generic-api-key rule by name.
+[[allowlists]]
+description = "Example idempotency keys (UUIDs) in README API examples"
+condition = "AND"
+paths = ['''^README\.md$''']
+regexTarget = "line"
+regexes = ['''"(operation|submission)_key": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"''']
