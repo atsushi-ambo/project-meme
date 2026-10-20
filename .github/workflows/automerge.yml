@@ -11,7 +11,7 @@ on:
 permissions: {}
 jobs:
   merge:
-    uses: atsushi-ambo/ci-workflows/.github/workflows/automerge.yml@456ca23091f484ee76af73531125108bc96976e1
+    uses: atsushi-ambo/ci-workflows/.github/workflows/automerge.yml@57a00931897b3024e21770b65bd644ced1804512 # v1.0.0
     permissions:
       contents: write
       pull-requests: write
