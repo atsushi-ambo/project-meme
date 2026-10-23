@@ -25,7 +25,7 @@ jobs:
           python -m pip install --no-cache-dir -r requirements.txt
       - name: Ruff (syntax, undefined names, imports)
         run: ruff check app tests scripts migrations
-      - name: Mypy (staged: observability, web, routers)
+      - name: "Mypy (staged: observability, web, routers)"
         run: mypy
   coverage:
     runs-on: ubuntu-latest
@@ -42,7 +42,7 @@ jobs:
           --health-cmd "pg_isready -U meme_owner -d meme"
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-DATABASE_URL: <redacted>
+      DATABASE_URL: <redacted>
       SECRET_KEY: test-only-key-never-used-outside-disposable-environment
       MEDIA_ROOT: /tmp/meme-test-media
       BASE_URL: http://localhost:8000
