@@ -1,0 +1,77 @@
+name: Quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint-and-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned checkers and app dependencies
+        run: |
+          python -m pip install --no-cache-dir ruff==0.17.2 mypy==2.4.0
+          python -m pip install --no-cache-dir -r requirements.txt
+      - name: Ruff (syntax, undefined names, imports)
+        run: ruff check app tests scripts migrations
+      - name: "Mypy (staged: observability, web, routers)"
+        run: mypy
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      db:
+        image: postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+        env:
+          POSTGRES_DB: meme
+          POSTGRES_USER: meme_owner
+          POSTGRES_PASSWORD: test-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U meme_owner -d meme"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgresql+psycopg://meme_app:test-owner-only@localhost:5432/meme
+      SECRET_KEY: test-only-key-never-used-outside-disposable-environment
+      MEDIA_ROOT: /tmp/meme-test-media
+      BASE_URL: http://localhost:8000
+      JOB_INTERVAL: '3600'
+      MEME_TEST_MODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install app and coverage
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg postgresql-client
+          python -m pip install --no-cache-dir -r requirements.txt coverage==7.15.4
+      - name: Alias the DB host the migration tests hardcode (db:5432)
+        run: echo "127.0.0.1 db" | sudo tee -a /etc/hosts
+      - name: Prepare app database role (same grants as scripts/init-db.sh)
+        run: |
+          PGPASSWORD=test-owner-only psql -h localhost -U meme_owner -d meme -v ON_ERROR_STOP=1 --set=app_password='test-owner-only' <<'SQL'
+          CREATE ROLE meme_app LOGIN PASSWORD :'app_password';
+          GRANT CONNECT ON DATABASE meme TO meme_app;
+          GRANT USAGE ON SCHEMA public TO meme_app;
+          ALTER DEFAULT PRIVILEGES FOR ROLE meme_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO meme_app;
+          ALTER DEFAULT PRIVILEGES FOR ROLE meme_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO meme_app;
+          SQL
+          DATABASE_URL=postgresql+psycopg://meme_owner:test-owner-only@localhost:5432/meme python -m alembic upgrade head
+      - name: Run tests with coverage gate
+        run: |
+          python -m coverage run -m pytest -q -p no:cacheprovider tests
+          python -m coverage report

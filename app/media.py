@@ -1,5 +1,4 @@
 """ファイルとDBの二段階保存、期限削除。実ファイル名はランダムキーだけ。"""
-import asyncio
 import json
 import os
 import re
@@ -12,10 +11,9 @@ from pathlib import Path
 import anyio
 from fastapi import HTTPException
 from PIL import Image
-from sqlalchemy import select, func, or_, delete
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func, delete
 from .config import settings
-from .db import transaction, engine
+from .db import transaction
 from .models import Cat, Media, Observation, Health, DictionaryItem, now
 from .services import parent
 from .media_metadata import video_capture_time
