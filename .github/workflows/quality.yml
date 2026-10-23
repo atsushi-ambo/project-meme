@@ -59,6 +59,8 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg postgresql-client
           python -m pip install --no-cache-dir -r requirements.txt coverage==7.15.4
+      - name: Alias the DB host the migration tests hardcode (db:5432)
+        run: echo "127.0.0.1 db" | sudo tee -a /etc/hosts
       - name: Prepare app database role (same grants as scripts/init-db.sh)
         run: |
           PGPASSWORD=test-owner-only psql -h localhost -U meme_owner -d meme -v ON_ERROR_STOP=1 --set=app_password='test-owner-only' <<'SQL'
