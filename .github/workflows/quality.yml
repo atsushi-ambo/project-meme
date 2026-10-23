@@ -42,7 +42,7 @@ jobs:
           --health-cmd "pg_isready -U meme_owner -d meme"
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-      DATABASE_URL: postgresql+psycopg://meme_owner:test-owner-only@localhost:5432/meme
+      DATABASE_URL: postgresql+psycopg://meme_app:test-owner-only@localhost:5432/meme
       SECRET_KEY: test-only-key-never-used-outside-disposable-environment
       MEDIA_ROOT: /tmp/meme-test-media
       BASE_URL: http://localhost:8000
