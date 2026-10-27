@@ -32,7 +32,7 @@ def validate_image(image):
 
 
 
-def database_image(compose_path=None):
+def database_image(compose_path=None, *, with_kind=False):
     # .envを読んだりComposeを起動せず、公開設定の固定参照だけを取り出す。
     path = ROOT / 'compose.yaml' if compose_path is None else Path(compose_path)
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as source:
@@ -64,10 +64,10 @@ def database_image(compose_path=None):
         bases = [line[5:] for line in lines if line.startswith('FROM ')]
         if len(bases) != 1 or not re.fullmatch(r'postgres:18-bookworm@sha256:[a-f0-9]{64}', bases[0]):
             raise ValueError('DBのベースイメージはPostgreSQL 18 bookwormの固定参照が必要です。')
-        return bases[0]
+        return (bases[0], True) if with_kind else bases[0]
     if not re.fullmatch(r' postgres:18-(?:bookworm|trixie)@sha256:[a-f0-9]{64}', value):
         raise ValueError('DBイメージは公式PostgreSQL18の固定ダイジェストで指定してください。')
-    return value[1:]
+    return (value[1:], False) if with_kind else value[1:]
 
 
 def database_is_fresh(cache):
@@ -176,9 +176,8 @@ def check(image=None, *, database=False):
             if database:
                 if image is not None:
                     raise ValueError('--imageと--databaseは同時に指定できません。')
-                image = database_image()
-                compose = (ROOT / 'compose.yaml').read_text()
-                if 'image: ${DB_IMAGE:-project-meme-db:local}' in compose:
+                image, custom_database = database_image(with_kind=True)
+                if custom_database:
                     image = 'project-meme-security-db-image-' + suffix
                     built_image = image
                     # 公式固定イメージを基にOS更新を含む候補を作る。実DBには触れない。

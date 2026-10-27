@@ -67,6 +67,8 @@ def download(client, media, dest):
 
 def run_ffmpeg(source, output, args):
     # 引数は固定し、ローカルファイルだけを読み、コンテナからネットワークへ接続しない。
+    if ',' in str(source) or ',' in str(output):
+        raise ValueError('保存先のパスにカンマを含めることはできません。')
     container_name = 'meme-analysis-' + uuid.uuid4().hex
     command = ['docker', 'run', '--name', container_name, '--rm', '--pull=never', '--network=none', '--read-only',
         '--cap-drop=ALL', '--security-opt=no-new-privileges', '--memory=1g', '--cpus=2',
@@ -82,8 +84,15 @@ def run_ffmpeg(source, output, args):
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
         raise ValueError('動画の切り出しに失敗しました。Dockerと動画の状態を確認してください。') from error
     finally:
-        subprocess.run(['docker', 'rm', '-f', container_name], stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False)
+        failed = sys.exc_info()[0] is not None
+        try:
+            subprocess.run(['docker', 'rm', '-f', container_name], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False)
+        except (OSError, subprocess.SubprocessError) as error:
+            if failed:
+                print('分析コンテナを整理できません。Dockerの状態を確認してください。', file=sys.stderr)
+            else:
+                raise ValueError('分析コンテナを整理できません。Dockerの状態を確認してください。') from error
 
 
 def sound_levels(path):

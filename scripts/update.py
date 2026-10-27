@@ -14,12 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / 'Library/Application Support/project-meme'
 
 
-def deliver(command, snapshot, destination, revision, previous):
+def deliver(command, snapshot, destination, revision, previous, previous_db):
     """副作用の入口を引数にし、各失敗段階をDockerなしでも検証できるようにする。"""
     candidate = 'project-meme:update-' + uuid.uuid4().hex[:12]
     candidate_db = 'project-meme-db:update-' + uuid.uuid4().hex[:12]
     recovery = 'project-meme:before-' + destination.name
+    recovery_db = 'project-meme-db:before-' + destination.name
     record = {'revision': revision, 'previous_image': previous,
+              'previous_db_image': previous_db, 'recovery_db_image': recovery_db,
               'candidate_image': candidate, 'candidate_db_image': candidate_db, 'recovery_image': recovery}
     database_update_started = False
     migration_started = False
@@ -31,6 +33,7 @@ def deliver(command, snapshot, destination, revision, previous):
         command([sys.executable, str(ROOT / 'scripts/security_check.py')])
         print('3/9 新しいイメージを準備します。', flush=True)
         command(['docker', 'image', 'tag', previous, recovery])
+        command(['docker', 'image', 'tag', previous_db, recovery_db])
         # apt upgradeの古いキャッシュを再利用せず、今回検査する候補を作る。
         command(['compose', 'build', 'web', '--no-cache'], image=candidate)
         print('4/9 新しいイメージのOS脆弱性を監査します。', flush=True)
@@ -51,6 +54,12 @@ def deliver(command, snapshot, destination, revision, previous):
         (destination / 'update.json').write_text(json.dumps(record, indent=2))
         command(['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
                  '--wait-timeout', '90', 'db'], image=candidate, database=candidate_db)
+        # 照合順序が変わっていれば索引を使う前に止め、復旧を手動で判断する。
+        checked = command(['compose', 'exec', '-T', 'db', 'psql', '-U', 'meme_owner', '-d', 'meme',
+            '-At', '-c', "SELECT count(*) FROM pg_database WHERE datname = 'meme' AND datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid)"],
+            image=candidate, database=candidate_db, capture_output=True, text=True)
+        if checked.stdout.strip() != '0':
+            raise ValueError('DBの照合順序のバージョンが一致しません。アプリを停止し、復旧手順を確認してください。')
         print('8/9 DB構造を更新します。', flush=True)
         migration_started = True
         command(['compose', 'run', '--rm', '--no-deps', '-T', 'migrate'], image=candidate, database=candidate_db)
@@ -114,9 +123,14 @@ def main():
             print('起動中の既存アプリが必要です。初回はREADMEの起動手順を使ってください。', file=sys.stderr)
             return 1
         previous = output(['docker', 'inspect', '--format', '{{.Image}}', container])
+        db_container = output(['compose', 'ps', '--status', 'running', '-q', 'db'])
+        if not db_container:
+            print('起動中の既存DBが必要です。', file=sys.stderr)
+            return 1
+        previous_db = output(['docker', 'inspect', '--format', '{{.Image}}', db_container])
         destination = STATE / 'backups' / (datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
         try:
-            deliver(command, snapshots.backup, destination, revision, previous)
+            deliver(command, snapshots.backup, destination, revision, previous, previous_db)
         except (subprocess.CalledProcessError, OSError, ValueError, KeyboardInterrupt):
             print(f'更新を完了できませんでした。バックアップ・段階の記録: {destination}\n'
                   'DB更新開始後の失敗ではアプリを停止します。READMEの復元手順で別環境に復元してください。', file=sys.stderr)
