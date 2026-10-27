@@ -388,7 +388,7 @@ Python依存監査はOS・FFmpegの既知の問題やアプリの権限・業務
 
 ### コンテナOSの検査と実行上限
 
-`scripts/container_check.py`は固定digestのTrivyで、アプリ・DBイメージのOSパッケージを調べる。引数なしでは現在のDockerfileから一時イメージを作り、`--image`は既存のローカルイメージを対象とする。`--database`は通常ファイルのcompose.yamlから固定digestの公式PostgreSQL 18参照だけを取り出し、pullしてイメージを検査する。DBコンテナやDBボリュームは使わず、設定の変数展開は行わない。イメージはdocker saveでローカルのアーカイブへ固定し、更新48時間以内の脆弱性DBを取得した後、ネットワークなしの検査用コンテナで読み取る。Dockerソケット・.env・個人メディア・DBを検査コンテナへ渡さない。
+`scripts/container_check.py`は固定digestのTrivyで、アプリ・DBイメージのOSパッケージを調べる。引数なしでは現在のDockerfileから一時イメージを作り、`--image`は既存のローカルイメージを対象とする。`--database`は固定digestの公式PostgreSQL 18を基に`Dockerfile.db`からOS修正を適用した一時イメージを作り検査する。DBコンテナやDBボリュームは使わず、設定の変数展開は行わない。イメージはdocker saveでローカルのアーカイブへ固定し、更新48時間以内の脆弱性DBを取得した後、ネットワークなしの検査用コンテナで読み取る。Dockerソケット・.env・個人メディア・DBを検査コンテナへ渡さない。
 
 修正版のあるHIGH／CRITICALは失敗にし、修正版がないHIGH／CRITICALの件数も表示する。低い重大度や未修正の検出が残る場合があるため、成功を「脆弱性なし」と解釈しない。古い脆弱性DB、対象OSが確認できない・サポート切れ、検査失敗、容量超過は未完了として拒否する。検査用コンテナ・一時イメージ・アーカイブを整理し、取得できない情報をゼロ扱いにしない。[Trivyの対象と脆弱性検査](https://trivy.dev/docs/latest/scanner/vulnerability/)を参照する。
 

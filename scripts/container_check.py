@@ -54,6 +54,17 @@ def database_image(compose_path=None):
     if len(image_lines) != 1:
         raise ValueError('compose.yamlのDBイメージが一意に指定されていません。')
     value = image_lines[0].rstrip('\r')
+    if value == ' ${DB_IMAGE:-project-meme-db:local}':
+        dockerfile = path.parent / 'Dockerfile.db'
+        with os.fdopen(os.open(dockerfile, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_COMPOSE_BYTES:
+                raise ValueError('Dockerfile.dbは通常ファイルである必要があります。')
+            lines = source.read(MAX_COMPOSE_BYTES + 1).decode('utf-8').splitlines()
+        bases = [line[5:] for line in lines if line.startswith('FROM ')]
+        if len(bases) != 1 or not re.fullmatch(r'postgres:18-bookworm@sha256:[a-f0-9]{64}', bases[0]):
+            raise ValueError('DBのベースイメージはPostgreSQL 18 bookwormの固定参照が必要です。')
+        return bases[0]
     if not re.fullmatch(r' postgres:18-(?:bookworm|trixie)@sha256:[a-f0-9]{64}', value):
         raise ValueError('DBイメージは公式PostgreSQL18の固定ダイジェストで指定してください。')
     return value[1:]
@@ -166,8 +177,14 @@ def check(image=None, *, database=False):
                 if image is not None:
                     raise ValueError('--imageと--databaseは同時に指定できません。')
                 image = database_image()
-                # 公開イメージを取得するだけで、DBコンテナや実データには触れない。
-                run(['docker', 'pull', image], timeout=300)
+                compose = (ROOT / 'compose.yaml').read_text()
+                if 'image: ${DB_IMAGE:-project-meme-db:local}' in compose:
+                    image = 'project-meme-security-db-image-' + suffix
+                    built_image = image
+                    # 公式固定イメージを基にOS更新を含む候補を作る。実DBには触れない。
+                    run(['docker', 'build', '--pull', '--no-cache', '-f', 'Dockerfile.db', '-t', image, '.'], timeout=900)
+                else:
+                    run(['docker', 'pull', image], timeout=300)
             if image is None:
                 image = 'project-meme-security-' + suffix
                 built_image = image

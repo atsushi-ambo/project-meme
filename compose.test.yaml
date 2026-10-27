@@ -17,7 +17,10 @@ x-test-app: &test-app
     MEME_TEST_MODE: '1'
 services:
   db:
-    image: postgres:18-bookworm@sha256:bbf83594798e144bff365a9c191c5d779f181fb3135902064ab8ff11918020fc
+    image: ${COMPOSE_PROJECT_NAME}:db
+    build:
+      context: .
+      dockerfile: Dockerfile.db
     environment:
       POSTGRES_DB: meme
       POSTGRES_USER: meme_owner

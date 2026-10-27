@@ -23,7 +23,7 @@ def test_runner_isolation_and_cleanup(monkeypatch, failure, expected):
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(module['subprocess'], 'run', fake_run)
     assert module['main']() == expected
-    run, *middle, cleanup, image = calls
+    run, *middle, cleanup, image, db_image = calls
     assert len(middle) == (3 if failure in (0, 'restore') else 1 if failure == 'health' else 0)
     if middle:
         assert '--wait' in middle[0] and middle[0][-1] == 'web'
@@ -35,3 +35,4 @@ def test_runner_isolation_and_cleanup(monkeypatch, failure, expected):
     assert cleanup[cleanup.index('-p') + 1] == project
     assert 'down' in cleanup and '--volumes' in cleanup
     assert image == ['docker', 'image', 'rm', project + ':test']
+    assert db_image == ['docker', 'image', 'rm', project + ':db']

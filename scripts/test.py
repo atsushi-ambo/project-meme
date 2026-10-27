@@ -42,6 +42,8 @@ def main():
         # この実行だけに作ったタグ。通常アプリのイメージには触れない。
         subprocess.run(['docker', 'image', 'rm', project + ':test'], cwd=root, env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['docker', 'image', 'rm', project + ':db'], cwd=root, env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if cleaned and result == 0:
             result = cleaned
     return result

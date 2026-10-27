@@ -296,4 +296,4 @@ python3 scripts/container_check.py --image project-meme:local
 
 アプリのベースはdigest固定のPython 3.13・Debian Trixieを使い、ビルド時にOS更新を適用します。通常アプリとテストのアプリコンテナはメモリ2GB・CPU 2・プロセス128を上限とし、ローカルのファイル解析による資源消費を抑えます。
 
-DBはPostgreSQL 18・Debian Bookwormの公式イメージをdigestで固定します。OS世代を変えると文字の並び順やインデックスへ影響するため、今回の更新ではBookwormを維持しています。
+DBはPostgreSQL 18・Debian Bookwormの公式イメージをdigestで固定し、`Dockerfile.db`でOSの修正版を適用します。更新時は候補イメージ自体を検査してから反映します。OS世代を変えると文字の並び順やインデックスへ影響するため、Bookwormを維持しています。

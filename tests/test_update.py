@@ -21,7 +21,7 @@ def updater(monkeypatch):
 
 
 @pytest.mark.parametrize('failure', [None, 'test', 'python_audit', 'build', 'os_audit',
-                                     'database_audit', 'backup', 'database_update',
+                                     'database_build', 'database_audit', 'backup', 'database_update',
                                      'migrate', 'health', 'interrupt', 'database_interrupt'])
 def test_delivery_failure_boundaries(updater, tmp_path, failure):
     events = []
@@ -29,8 +29,9 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
     def command(args, image=None, **kwargs):
         if args[0] == sys.executable:
             stage = {'test.py': 'test', 'security_check.py': 'python_audit',
-                     'container_check.py': 'database_audit' if args[-1] == '--database'
+                     'container_check.py': 'database_audit' if args[-1].startswith('project-meme-db:update-')
                      else 'os_audit'}[Path(args[1]).name]
+        elif args[:2] == ['docker', 'build']: stage = 'database_build'
         elif 'build' in args: stage = 'build'
         elif 'migrate' in args: stage = 'migrate'
         elif 'up' in args: stage = 'database_update' if args[-1] == 'db' else 'health'
@@ -49,6 +50,7 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
             assert args == ['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
                             '--wait-timeout', '90', 'db']
             assert json.loads((dest / 'update.json').read_text())['stage'] == 'database_update_started'
+            assert kwargs['database'].startswith('project-meme-db:update-')
         if stage == 'os_audit':
             assert args[2] == '--image'
             assert args[3].startswith('project-meme:update-')
@@ -65,10 +67,10 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
             updater.deliver(command, snapshot, dest, 'revision', 'old-image')
     else:
         updater.deliver(command, snapshot, dest, 'revision', 'old-image')
-        assert events == ['test', 'python_audit', 'tag', 'build', 'os_audit',
-                          'database_audit', 'backup', 'database_update', 'migrate', 'health', 'tag']
+        assert events == ['test', 'python_audit', 'tag', 'build', 'os_audit', 'database_build',
+                          'database_audit', 'backup', 'database_update', 'migrate', 'health', 'tag', 'tag']
         assert json.loads((dest / 'update.json').read_text())['stage'] == 'complete'
-    if failure in ('test', 'python_audit', 'build', 'os_audit', 'database_audit'):
+    if failure in ('test', 'python_audit', 'build', 'os_audit', 'database_build', 'database_audit'):
         assert not dest.exists()
         assert 'stop' not in events and 'restart' not in events
     if failure == 'backup':
@@ -92,18 +94,21 @@ def test_security_gate_preserves_existing_app_and_backup(updater, tmp_path, fail
     sentinel.write_text('{"previous_backup": true}')
     calls = []
     candidate = None
+    candidate_db = None
 
     def command(args, image=None, **kwargs):
-        nonlocal candidate
+        nonlocal candidate, candidate_db
         calls.append((args, image))
         if args[:3] == ['compose', 'build', 'web']:
             candidate = image
+        if args[:2] == ['docker', 'build']:
+            candidate_db = args[args.index('-t') + 1]
         if args[0] == sys.executable:
             script = Path(args[1]).name
             if script == 'container_check.py':
                 assert candidate is not None
-                if args[-1] == '--database':
-                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'), '--database']
+                if args[-1] == candidate_db:
+                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate_db]
                     stage = 'database_audit'
                 else:
                     assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'),

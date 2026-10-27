@@ -17,9 +17,10 @@ STATE = Path.home() / 'Library/Application Support/project-meme'
 def deliver(command, snapshot, destination, revision, previous):
     """副作用の入口を引数にし、各失敗段階をDockerなしでも検証できるようにする。"""
     candidate = 'project-meme:update-' + uuid.uuid4().hex[:12]
+    candidate_db = 'project-meme-db:update-' + uuid.uuid4().hex[:12]
     recovery = 'project-meme:before-' + destination.name
     record = {'revision': revision, 'previous_image': previous,
-              'candidate_image': candidate, 'recovery_image': recovery}
+              'candidate_image': candidate, 'candidate_db_image': candidate_db, 'recovery_image': recovery}
     database_update_started = False
     migration_started = False
     stopped = False
@@ -35,7 +36,8 @@ def deliver(command, snapshot, destination, revision, previous):
         print('4/9 新しいイメージのOS脆弱性を監査します。', flush=True)
         command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate])
         print('5/9 更新先DBイメージのOS脆弱性を監査します。', flush=True)
-        command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--database'])
+        command(['docker', 'build', '--pull', '--no-cache', '-f', 'Dockerfile.db', '-t', candidate_db, '.'])
+        command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate_db])
         # 検査の不合格・中断時は、この先のアプリ停止やDB操作へ進まない。
         print('6/9 アプリを止めてバックアップします。', flush=True)
         stopped = True
@@ -48,14 +50,15 @@ def deliver(command, snapshot, destination, revision, previous):
         record['stage'] = 'database_update_started'
         (destination / 'update.json').write_text(json.dumps(record, indent=2))
         command(['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
-                 '--wait-timeout', '90', 'db'], image=candidate)
+                 '--wait-timeout', '90', 'db'], image=candidate, database=candidate_db)
         print('8/9 DB構造を更新します。', flush=True)
         migration_started = True
-        command(['compose', 'run', '--rm', '--no-deps', '-T', 'migrate'], image=candidate)
+        command(['compose', 'run', '--rm', '--no-deps', '-T', 'migrate'], image=candidate, database=candidate_db)
         print('9/9 起動とDB接続を確認します。', flush=True)
         command(['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
-                 '--wait-timeout', '90', 'web'], image=candidate)
+                 '--wait-timeout', '90', 'web'], image=candidate, database=candidate_db)
         command(['docker', 'image', 'tag', candidate, 'project-meme:local'])
+        command(['docker', 'image', 'tag', candidate_db, 'project-meme-db:local'])
         record['stage'] = 'complete'
         (destination / 'update.json').write_text(json.dumps(record, indent=2))
     except BaseException:
@@ -88,14 +91,15 @@ def main():
         values = snapshots.env_values()
         # 別のComposeプロジェクトや外部環境変数で保存先が変わることを防ぐ。
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith('COMPOSE_') and k not in values and k != 'APP_IMAGE'}
+               if not k.startswith('COMPOSE_') and k not in values and k not in ('APP_IMAGE', 'DB_IMAGE')}
 
-        def command(args, image=None, **kwargs):
+        def command(args, image=None, database=None, **kwargs):
             local_env = dict(env)
             if args[0] == 'compose':
                 args = ['docker', 'compose', '--env-file', str(ROOT / '.env'),
                         '-p', 'project-meme', '-f', str(ROOT / 'compose.yaml'), *args[1:]]
                 local_env['APP_IMAGE'] = image or 'project-meme:local'
+                local_env['DB_IMAGE'] = database or 'project-meme-db:local'
             return subprocess.run(args, cwd=ROOT, env=local_env, check=True, **kwargs)
 
         def output(args):
