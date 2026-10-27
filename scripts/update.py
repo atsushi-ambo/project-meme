@@ -30,7 +30,8 @@ def deliver(command, snapshot, destination, revision, previous):
         command([sys.executable, str(ROOT / 'scripts/security_check.py')])
         print('3/9 新しいイメージを準備します。', flush=True)
         command(['docker', 'image', 'tag', previous, recovery])
-        command(['compose', 'build', 'web'], image=candidate)
+        # apt upgradeの古いキャッシュを再利用せず、今回検査する候補を作る。
+        command(['compose', 'build', 'web', '--no-cache'], image=candidate)
         print('4/9 新しいイメージのOS脆弱性を監査します。', flush=True)
         command([sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate])
         print('5/9 更新先DBイメージのOS脆弱性を監査します。', flush=True)

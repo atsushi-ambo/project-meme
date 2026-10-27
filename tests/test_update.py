@@ -43,6 +43,8 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
         if failure == 'database_interrupt' and stage == 'database_update': raise KeyboardInterrupt()
         if stage in ('build', 'database_update', 'migrate', 'health'):
             assert image.startswith('project-meme:update-')
+        if stage == 'build':
+            assert args == ['compose', 'build', 'web', '--no-cache']
         if stage == 'database_update':
             assert args == ['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
                             '--wait-timeout', '90', 'db']
