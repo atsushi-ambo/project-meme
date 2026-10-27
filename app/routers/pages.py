@@ -8,7 +8,7 @@ from ..analysis import build_comparison, technical_summary
 from ..db import transaction
 from ..exports import health_csv
 from ..media import used_bytes
-from ..models import Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, Tag
+from ..models import Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, SoundAnalysis, Tag
 from ..reviews import build_weekly_review
 from ..schemas import RecordId
 from ..services import LABELS, parent
@@ -78,6 +78,7 @@ def detail(request: Request, kind: str, id: RecordId):
             context=dict(comments=list(db.scalars(select(Comment).where(Comment.observation_id==id).order_by(Comment.created_at))),
                 interactions=list(db.scalars(select(Interaction).where(Interaction.observation_id==id).order_by(Interaction.id))),
                 evidence=list(db.execute(select(Evidence,DictionaryItem).join(DictionaryItem).where(Evidence.observation_id==id))),
+                sound_results=list(db.execute(select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id).order_by(SoundAnalysis.created_at.desc()))),
                 items=list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title))))
         return render(request,'detail.html',kind=kind,row=row,media=media,
                       technical={m.id: technical_summary(m.technical_info) for m in media}, **context)

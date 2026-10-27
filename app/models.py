@@ -1,7 +1,7 @@
 """主キー、外部キー、CHECK制約をPythonで定義する。"""
 from datetime import datetime, timezone
 from sqlalchemy import (BigInteger, Boolean, CheckConstraint, Column, Date, DateTime,
-    ForeignKey, Index, Integer, Numeric, String, Text)
+    ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -157,3 +157,21 @@ class Media(Timestamps, Base):
         CheckConstraint("status <> 'ready' OR (bytes IS NOT NULL AND mime_type IS NOT NULL AND retention_started_at IS NOT NULL AND expires_at IS NOT NULL)", name='media_ready'),
         Index('ix_media_expiration', 'status', 'expires_at'),
     )
+
+
+class SoundAnalysis(Base):
+    """利用者が選んだ区間の計測と観察。音声そのものは複製しない。"""
+    __tablename__ = 'sound_analyses'
+    id = Column(BigInteger, primary_key=True)
+    media_id = Column(ForeignKey('media.id', ondelete='CASCADE'), nullable=False, index=True)
+    start_ms = Column(Integer, nullable=False)
+    end_ms = Column(Integer, nullable=False)
+    rms = Column(Numeric(8, 6), nullable=False)
+    peak = Column(Numeric(8, 6), nullable=False)
+    observation = Column(Text, nullable=False, default='')
+    hypothesis = Column(Text, nullable=False, default='')
+    unknown = Column(Text, nullable=False, default='')
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now)
+    __table_args__ = (CheckConstraint('start_ms >= 0 AND end_ms > start_ms AND end_ms - start_ms <= 10000', name='sound_analysis_interval'),
+                      CheckConstraint('rms >= 0 AND rms <= 1 AND peak >= 0 AND peak <= 1', name='sound_analysis_levels'),
+                      UniqueConstraint('media_id', 'start_ms', 'end_ms', name='sound_analysis_unique_interval'))

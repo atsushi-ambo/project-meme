@@ -7,13 +7,36 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from ..db import transaction
 from ..media import request_delete
-from ..models import Cat, Comment, DictionaryItem, Evidence, Tag, now
+from ..models import Cat, Comment, DictionaryItem, Evidence, Media, SoundAnalysis, Tag, now
+from ..sound_analysis import create as create_sound_analysis
 from ..schemas import (DictionaryInput, EvidenceInput, GuessesInput, HealthInput,
                        InteractionInput, JST, ObservationEditInput, ObservationInput, RecordId)
 from ..services import add_guesses, parent, save_dictionary, save_entry, save_evidence, save_interaction
 from ..web import id_validator, read_form, render, safe_jobs
 
 router = APIRouter()
+
+@router.post('/observations/{id}/sound/{media_id}')
+async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
+    raw = await read_form(request)
+    def process():
+        with transaction() as db:
+            create_sound_analysis(db, id, media_id, raw)
+        return RedirectResponse(f'/entries/observation/{id}#sound-analysis', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/observations/{id}/sound-result/{result_id}/delete')
+async def sound_delete(request: Request, id: RecordId, result_id: RecordId):
+    await read_form(request)
+    def process():
+        with transaction() as db:
+            parent(db, 'observation', id, True)
+            result = db.scalar(select(SoundAnalysis).join(Media).where(
+                SoundAnalysis.id == result_id, Media.observation_id == id).with_for_update())
+            if not result: raise HTTPException(404)
+            db.delete(result)
+        return RedirectResponse(f'/entries/observation/{id}#sound-analysis', 303)
+    return await anyio.to_thread.run_sync(process)
 
 @router.post('/entries/{kind}/save')
 @router.post('/entries/{kind}/{id}/save')

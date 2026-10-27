@@ -13,7 +13,7 @@ from sqlalchemy import case, func, select
 from .media import paths
 from .media_info import technical_summary
 from .models import (Cat, Comment, DictionaryItem, Evidence, Interaction, Media,
-                     Observation, ObservationTag, Tag, now)
+                     Observation, ObservationTag, SoundAnalysis, Tag, now)
 from .schemas import JST
 from .services import ASSESSMENTS
 
@@ -155,14 +155,22 @@ def build_comparison(db, ids_string):
         ), 1), else_=0)
         media = [media_summary(item, at) for item in db.scalars(select(Media).where(media_condition)
             .order_by(active.desc(), Media.id.desc()).limit(MEDIA_LIMIT))]
+        sound_condition = Media.observation_id == id
+        sound_total = db.scalar(select(func.count()).select_from(SoundAnalysis)
+            .join(Media, Media.id == SoundAnalysis.media_id).where(sound_condition))
+        sounds = [{'media_id': item.media_id, 'start_seconds': item.start_ms / 1000,
+                   'end_seconds': item.end_ms / 1000, 'observation': item.observation,
+                   'hypothesis': item.hypothesis, 'unknown': item.unknown}
+                  for item in db.scalars(select(SoundAnalysis).join(Media, Media.id == SoundAnalysis.media_id)
+                    .where(sound_condition).order_by(SoundAnalysis.created_at.desc()).limit(20))]
         observations.append({
             'id': id, 'url': url, 'occurred_at': local_time(row.occurred_at),
             'location': row.location, 'description': row.description, 'revision': row.revision,
             'description_source': 'owner memo', 'tags': tags, 'guesses': guesses,
-            'legacy_notes': notes, 'media': media,
+            'legacy_notes': notes, 'media': media, 'sound_notes': sounds,
             'omitted': {'tags': tag_total - len(tags), 'guesses': guess_total - len(guesses),
                         'comments': legacy_omitted['comment'], 'interactions': legacy_omitted['interaction'],
-                        'media': media_total - len(media)},
+                        'media': media_total - len(media), 'sound_notes': sound_total - len(sounds)},
         })
     cat = db.get(Cat, 1)
     report = {
