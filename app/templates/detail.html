@@ -9,6 +9,27 @@
 {% if kind=='observation' and not row.is_sample %}<p><a href="/compare?ids={{ row.id }}">この記録の比較資料を見る</a> · <a href="/compare">ほかの記録と比べる</a></p>{% endif %}
 <h2>動画・写真・音声</h2><div class="media-grid">{% for m in media if m.status!='failed' and m.deletion_reason!='upload_failed' %}<article class="card"><h3>{{ m.original_name }}</h3>{% if m.status=='ready' and (m.keep or m.expires_at>now) %}{% if m.mime_type.startswith('image/') %}<img src="/media/{{ m.id }}" alt="記録の添付写真" loading="lazy">{% elif m.mime_type.startswith('video/') %}<video controls preload="metadata" src="/media/{{ m.id }}"></video>{% else %}<audio controls preload="metadata" src="/media/{{ m.id }}"></audio>{% endif %}<p><a href="/media/{{ m.id }}" download="{{ m.original_name }}">原本をダウンロード</a></p><small>保存済み · {{ m.bytes|size }}<br>撮影：{{ m.captured_at|localtime }}（日本時間）{% if m.captured_at_source=='metadata' %} · 動画から自動取得{% elif m.captured_at_source=='user' %} · 手入力{% endif %}<br>{{ '残す指定' if m.keep else '期限：' ~ (m.expires_at|localtime) }}</small>{{ media_facts(technical[m.id]) }}{% if m.mime_type.startswith(('video/', 'audio/')) and not technical[m.id] %}<form method="post" action="/media/{{ m.id }}/info">{{ token(csrf) }}<button class="secondary">動画・音声の基本情報を取得</button><p class="muted">原本から長さ・解像度・音声の有無を確認します。</p></form>{% endif %}<details><summary>撮影日時を修正</summary><form method="post" action="/media/{{ m.id }}/captured-at">{{ token(csrf) }}<label>撮影日時<input type="datetime-local" name="captured_at" value="{{ m.captured_at|inputtime }}"></label><p class="muted">空欄で保存すると「不明」になります。</p><button class="secondary">撮影日時を保存</button></form></details>{% elif m.status=='deleted' %}<p>添付は{{ '保存期限' if m.deletion_reason=='expired' else '削除操作' }}により削除済みです。</p>{% elif m.status=='failed' %}<p>取り込みに失敗しました。本文は保存されています。下のフォームから再試行できます。</p>{% else %}<p>取り込み・削除処理中、または期限切れです。</p>{% endif %}</article>{% endfor %}</div>
 <div class="card" id="upload" data-kind="{{ kind }}" data-id="{{ row.id }}"><h3>添付を追加</h3><p>HEVC/H.264のMOV・MP4、JPEG・PNG、M4A・MP3・WAV。1件 {{ settings.max_file_bytes|size }} まで。</p><p>iPhoneの動画はMOVのまま選んでください。拡張子の変更は不要です。ダウンロードから選ぶとアプリの保存領域へコピーし、元ファイルは残ります。</p><p class="muted">撮影日時は動画の情報から保存時に自動取得します。取得できない場合は「不明」と表示し、保存後に修正できます。</p><details><summary>撮影日時を手入力する（任意）</summary><label>撮影日時<input id="captured-at" type="datetime-local"></label><p class="muted">入力した日時を優先します。空欄なら自動取得します。</p></details><label>ファイルを選択<input id="media-file" type="file" accept=".mov,.mp4,.jpg,.jpeg,.png,.m4a,.mp3,.wav"></label><p id="file-info"></p><button type="button" id="upload-button">添付をMacBookに保存</button><p id="upload-status" role="status"></p><small>完了まではこの画面を開いてください。ブラウザで再生できない場合は原本をダウンロードして確認できます。</small></div>
+{% if kind=='observation' and not row.is_sample %}
+<section class="card" id="sound-analysis"><h2>声を記録して比べる</h2>
+<p>動画を再生して、メメの声や比較したい音が入った区間を秒で選びます。1回10秒まで。測定値には人の声や物音も含まれ、鳴き声の意味は判定できません。</p>
+{% for result, m in sound_results %}<article class="card"><h3>{{ m.original_name }} · {{ result.start_ms / 1000 }}〜{{ result.end_ms / 1000 }}秒</h3>
+{% if m.status == 'ready' and (m.keep or m.expires_at > now) %}<p><a href="/media/{{ m.id }}#t={{ result.start_ms / 1000 }},{{ result.end_ms / 1000 }}">元の動画・音声を確認</a></p>{% else %}<p>元の添付は現在利用できません。</p>{% endif %}
+<p>選んだ区間の音量：平均 {{ result.rms }}、最大 {{ result.peak }}（0〜1）</p><p class="muted">録音距離や端末の設定で値は変わります。異なる動画の数値をそのまま比較できません。</p>
+{% if result.observation %}<p>聞こえたこと・見えたこと：{{ result.observation }}</p>{% endif %}
+{% if result.hypothesis %}<p>意味の予想：{{ result.hypothesis }}</p>{% endif %}
+{% if result.unknown %}<p>分からないこと：{{ result.unknown }}</p>{% endif %}
+<form method="post" action="/observations/{{ row.id }}/sound-result/{{ result.id }}/delete" data-confirm="この分析結果を削除しますか？ 元の記録と動画は残ります。">{{ token(csrf) }}<button class="secondary">この分析を削除</button></form></article>{% else %}<p>分析結果はまだありません。</p>{% endfor %}
+{% for m in media if m.status=='ready' and (m.keep or m.expires_at>now) and m.mime_type.startswith(('video/', 'audio/')) %}
+{% set info = technical[m.id] %}{% if info and info.audio and info.duration_seconds %}<details><summary>{{ m.original_name }}の区間を測る</summary>
+<form method="post" action="/observations/{{ row.id }}/sound/{{ m.id }}">{{ token(csrf) }}
+<label>開始（秒）<input type="number" name="start" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label>
+<label>終了（秒）<input type="number" name="end" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label>
+<label>聞こえたこと・見えたこと（任意）<textarea name="observation" maxlength="1000" placeholder="例：短く2回鳴いて、こちらを見た"></textarea></label>
+<label>意味の予想（任意）<textarea name="hypothesis" maxlength="1000" placeholder="例：遊びたいのかもしれない"></textarea></label>
+<label>分からないこと（任意）<textarea name="unknown" maxlength="1000" placeholder="例：ごはんが関係あるかは不明"></textarea></label>
+<button>この区間を測って保存</button></form></details>{% elif info %}<p>{{ m.original_name }}は音声の形式または長さを確認できないため、区間を測れません。</p>{% else %}<p>{{ m.original_name }}は先に上の「動画・音声の基本情報を取得」を押してください。</p>{% endif %}{% endfor %}
+<p><a href="/compare">ほかの記録と比べる</a> · <a href="/dictionary">メメ辞書を見る</a></p></section>
+{% endif %}
 {% if kind=='observation' %}
 <details class="card optional-notes" id="optional-notes">
 <summary>何を伝えたかったと思う？（任意）<span class="muted">予想 {{ evidence|length }}件</span></summary>

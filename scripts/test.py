@@ -33,6 +33,9 @@ def main():
                 createdb -U meme_owner -O meme_owner meme_restore_test
                 pg_restore -U meme_owner -d meme_restore_test --exit-on-error --no-owner "$dump"
                 psql -U meme_owner -d meme_restore_test -v ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version'
+                # 音声分析の表も件数ごと復元されることを確認する。
+                count='SELECT count(*) FROM sound_analyses'
+                test "$(psql -U meme_owner -d meme -Atc "$count")" = "$(psql -U meme_owner -d meme_restore_test -Atc "$count")"
             """])
 
     except KeyboardInterrupt:
