@@ -2,7 +2,7 @@
 import hashlib
 from sqlalchemy import select, delete
 from fastapi import HTTPException
-from .models import Cat, Observation, ObservationAppend, Health, Tag, ObservationTag, DictionaryItem, Evidence, Interaction, now
+from .models import Cat, Observation, ObservationAppend, Health, Tag, ObservationTag, DictionaryItem, Evidence, Interaction
 
 KINDS = {'observation': Observation, 'health': Health}
 LABELS = {'vomit':'吐いた','food':'食事','water':'水','toilet':'トイレ','weight':'体重','energy':'元気','other':'その他'}

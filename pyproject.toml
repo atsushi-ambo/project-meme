@@ -1,0 +1,42 @@
+# 静的チェックとカバレッジの設定。アプリの依存には含めない（CI専用）。
+# 段階導入: まず構文・未定義名（ruff F/E9）と新規モジュールの型を止め、
+# 既存モジュールの型注釈は触った箇所から広げる。
+
+[tool.ruff]
+target-version = "py313"
+line-length = 1000  # 日本語の長い文言を1行で持つ既存スタイルを維持する
+
+[tool.ruff.lint]
+select = ["F", "E9", "I"]
+ignore = ["I001"]  # 既存のimport順は段階的に整える
+
+[tool.ruff.lint.per-file-ignores]
+# テストは他モジュールのfixtureをimportして使うpytestの慣習のため
+"tests/**" = ["F401", "F811"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = false
+# 段階導入: 観測・画面共通・ルーターは型チェックを通し、それ以外は
+# 触ったモジュールから [[tool.mypy.overrides]] の対象を外していく。
+files = "app/observability.py,app/web.py,app/routers"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/demo.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# 現状の実測から上げる床。下げるときはPRで理由を書く。
+fail_under = 60
+
+[[tool.mypy.overrides]]
+# 段階導入の例外: SQLAlchemyの非Mapped記法とpydantic-settingsの
+# 環境変数注入は現行mypyでは誤検知になる。モデルをMapped記法へ
+# 移すときにこの例外を外す。
+module = ["app.config", "app.models"]
+ignore_errors = true

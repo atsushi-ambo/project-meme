@@ -1,7 +1,7 @@
 """主キー、外部キー、CHECK制約をPythonで定義する。"""
 from datetime import datetime, timezone
 from sqlalchemy import (BigInteger, Boolean, CheckConstraint, Column, Date, DateTime,
-    ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint)
+    ForeignKey, Index, Integer, Numeric, String, Text)
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -36,7 +36,10 @@ class Observation(Timestamps, Base):
     submission_hash = Column(String(64), nullable=False)
     deletion_requested_at = Column(DateTime(timezone=True))
     __table_args__ = (CheckConstraint('revision >= 1', name='observation_revision'),
-                      Index('ix_observation_date', 'cat_id', 'occurred_at'),)
+                      Index('ix_observation_date', 'cat_id', 'occurred_at'),
+                      Index('ix_observations_description_trgm', 'description',
+                            postgresql_using='gin',
+                            postgresql_ops={'description': 'gin_trgm_ops'}),)
 
 class ObservationAppend(Base):
     """追記の再送を判別する管理行。本文は観察の一つのメモにだけ保存する。"""
@@ -62,6 +65,8 @@ class Comment(Timestamps, Base):
     id = Column(BigInteger, primary_key=True)
     observation_id = Column(ForeignKey('observations.id', ondelete='CASCADE'), nullable=False, index=True)
     body = Column(Text, nullable=False)
+    __table_args__ = (Index('ix_comments_body_trgm', 'body', postgresql_using='gin',
+                            postgresql_ops={'body': 'gin_trgm_ops'}),)
 
 class DictionaryItem(Timestamps, Base):
     __tablename__ = 'dictionary_items'
@@ -117,6 +122,8 @@ class Health(Timestamps, Base):
         CheckConstraint("count IS NULL OR (event_type='vomit' AND count BETWEEN 1 AND 1000)", name='vomit_count'),
         CheckConstraint("meal_interval_minutes IS NULL OR (event_type='vomit' AND meal_interval_minutes BETWEEN 0 AND 10080)", name='meal_interval'),
         Index('ix_health_date', 'cat_id', 'occurred_at'),
+        Index('ix_health_details_trgm', 'details', postgresql_using='gin',
+              postgresql_ops={'details': 'gin_trgm_ops'}),
     )
 
 class Media(Timestamps, Base):
