@@ -1,6 +1,7 @@
 """HTTPの入口。フォームを検証し、保存サービスへ渡して画面を返す。"""
 import asyncio
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -217,10 +218,22 @@ def dictionary_detail(request: Request, id:RecordId):
         return render(request,'dictionary.html',items=[],edit=item,evidence=evidence,uses=uses)
 
 @app.get('/storage')
-def storage(request: Request):
+def storage(request: Request, month: str = ''):
+    if month and not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month):
+        raise HTTPException(422, '月はYYYY-MM形式で指定してください。')
     with transaction() as db:
+        month_key = func.to_char(func.timezone('Asia/Tokyo',
+            func.coalesce(Media.captured_at, Media.retention_started_at)), 'YYYY-MM')
+        videos = (Media.status == 'ready', Media.mime_type.like('video/%'))
+        months = db.execute(select(month_key.label('month'), func.count(Media.id).label('count'),
+            func.coalesce(func.sum(Media.bytes), 0).label('bytes')).where(*videos)
+            .group_by(month_key).order_by(month_key.desc())).all()
+        query = select(Media).where(Media.status.not_in(['deleted']))
+        if month:
+            query = query.where(*videos, month_key == month)
         return render(request,'storage.html',cat=db.get(Cat,1),used=used_bytes(db),
-            media=list(db.scalars(select(Media).where(Media.status.not_in(['deleted'])).order_by(Media.expires_at.asc().nullsfirst()).limit(200))),
+            media=list(db.scalars(query.order_by(Media.expires_at.asc().nullsfirst()).limit(200))),
+            video_months=months, selected_month=month,
             deleting=sum(db.scalar(select(func.count()).select_from(model).where(model.deletion_requested_at.is_not(None))) for model in (Observation,Health)))
 
 @app.get('/health.csv')

@@ -1,0 +1,25 @@
+name: automerge
+# Merges a PR labelled "automerge" once CI has passed on its latest commit.
+# The checks live in atsushi-ambo/ci-workflows; it never runs the PR's code.
+on:
+  workflow_run:
+    workflows: ["Tests", "Security", "Container security", "secret-scan"]
+    types: [completed]
+  # A label added, or a draft marked ready, after CI already passed.
+  pull_request_target:
+    types: [labeled, ready_for_review]
+permissions: {}
+jobs:
+  merge:
+    uses: atsushi-ambo/ci-workflows/.github/workflows/automerge.yml@57a00931897b3024e21770b65bd644ced1804512 # v1.0.0
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    with:
+      default-branch: main
+      ci-workflows: |
+        Tests
+        Security
+        Container security
+        secret-scan

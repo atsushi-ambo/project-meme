@@ -207,6 +207,9 @@ class Upload:
                 self.row.captured_at_source = 'metadata'
         os.replace(self.temp, self.final)
         self.row.mime_type, self.row.bytes = mime, self.size
+        # 動画は後から再検証できるよう、明示的に解除されるまで残す。
+        if mime.startswith('video/'):
+            self.row.keep = True
         self.row.technical_info = technical
         self.row.status = 'ready'
         self.row.retention_started_at = now()
