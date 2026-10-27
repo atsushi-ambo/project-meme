@@ -35,4 +35,3 @@ async def delete_all(request:Request):
         safe_jobs()
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
-

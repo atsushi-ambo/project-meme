@@ -88,4 +88,3 @@ async def guesses_api(request: Request, id: RecordId):
             add_guesses(db, id, data.guesses)
         return {'status': 'saved', 'url': f'/entries/observation/{id}'}
     return await anyio.to_thread.run_sync(process)
-

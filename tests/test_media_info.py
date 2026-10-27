@@ -3,6 +3,7 @@ from datetime import timedelta
 import json
 import subprocess
 from pathlib import Path
+import runpy
 
 import pytest
 from fastapi import HTTPException
@@ -42,6 +43,50 @@ def saved_video(client, video_bytes):
     with transaction() as db:
         db.get(Media, mid).technical_info = None
     return oid, mid
+
+
+def test_videos_are_kept_by_default_and_can_be_released(client, video_bytes):
+    from app.media import run_jobs
+    oid, mid = saved_video(client, video_bytes)
+    with transaction() as db:
+        row = db.get(Media, mid)
+        assert row.keep is True
+        expiry = row.expires_at
+    run_jobs(expiry + timedelta(days=1))
+    assert client.get(f'/media/{mid}').status_code == 200
+    assert post(client, f'/media/{mid}/keep', {}).status_code == 303
+    run_jobs(expiry + timedelta(days=1))
+    assert client.get(f'/media/{mid}').status_code == 404
+
+
+def test_retention_migration_preserves_available_videos_only(client, video_bytes):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    oid, active = saved_video(client, video_bytes)
+    _, expired = saved_video(client, video_bytes)
+    photo, response = upload(client, oid, png())
+    assert response.status_code == 200
+    migration = runpy.run_path('migrations/versions/e7802a46bd31_keep_videos.py')
+    with transaction() as db:
+        db.get(Media, active).keep = False
+        db.get(Media, expired).keep = False
+        db.get(Media, expired).expires_at = now() - timedelta(days=1)
+        db.flush()
+        with Operations.context(MigrationContext.configure(db.connection())):
+            migration['upgrade']()
+        db.expire_all()
+        assert db.get(Media, active).keep is True
+        assert db.get(Media, expired).keep is False
+        assert db.get(Media, photo).keep is False
+
+
+def test_video_storage_can_be_filtered_by_month(client, video_bytes):
+    oid, mid = saved_video(client, video_bytes)
+    response = client.get('/storage?month=2026-01')
+    assert response.status_code == 200
+    assert '2026-01' in response.text and 'sample.mp4' in response.text
+    assert 'sample.mp4' not in client.get('/storage?month=2026-02').text
+    assert client.get('/storage?month=2026-99').status_code == 422
 
 
 def protected_state(oid, mid):
@@ -217,6 +262,7 @@ def test_metadata_refuses_unavailable_states_without_probe_or_changes(client, vi
     with transaction() as db:
         row = db.get(Media, mid)
         if state == 'expired':
+            row.keep = False
             row.expires_at = now() - timedelta(days=1)
         else:
             row.status = state

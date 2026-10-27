@@ -127,4 +127,3 @@ async def profile(request:Request):
             cat=db.get(Cat,1,with_for_update=True); cat.name=name; cat.notes=notes; cat.birthday=birthday
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
-

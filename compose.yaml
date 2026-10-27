@@ -19,7 +19,10 @@ x-app: &app
   pids_limit: 128
 services:
   db:
-    image: postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+    image: ${DB_IMAGE:-project-meme-db:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.db
     environment:
       POSTGRES_DB: meme
       POSTGRES_USER: meme_owner
