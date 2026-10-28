@@ -1,78 +1,19 @@
-# project-meme × PySR 実験
+# PySR の合成データ実験
 
-project-meme の記録から、PySR（記号回帰）で「読める数式＝仮説の候補」を発見する実験スクリプトです。通常の機械学習がブラックボックスな予測器を返すのに対し、PySR はデータに合う数式そのものを探索します。project-meme の「観察 → 仮説 → 根拠で検証」という設計と相性が良い、という発想の検証用です。
-
-本体アプリには入れず、分析専用の独立スクリプトにしています（PySR は Julia ランタイムを含むためイメージが重く、API コンテナに入れるべきではないため）。
-
-## セットアップ
+PySR の記号回帰を、既知の式から作った合成データだけで試す独立した実験です。本体アプリや個人の記録は使いません。実行には Python の依存関係に加え、初回に Julia と関連パッケージのダウンロードが必要です。
 
 ```bash
-cd project-meme-pysr
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+# リポジトリルートで、隔離したDocker環境を作って実行・片付ける
+python3 scripts/check_pysr.py
+python3 scripts/check_pysr.py --audit  # Python依存関係の脆弱性検査
 ```
 
-初回実行時に Julia 本体と SymbolicRegression.jl が自動で入り、プリコンパイルに数分かかります。2回目以降は速いです。
+手動実行の場合は Python 3.13 の仮想環境に `pip install --require-hashes --only-binary=:all: -r experiments/pysr/requirements.lock` で固定依存を導入します。依存を更新する際は `requirements.in` を変更し、`uv pip compile experiments/pysr/requirements.in --python-version 3.13 --generate-hashes -o experiments/pysr/requirements.lock` で更新して再検証します。Julia側のパッケージはPySRが初回に取得するため、PythonのlockだけでJulia環境の完全な再現性は保証されません。依存監査もPythonパッケージのみで、Julia側は対象外です。
 
-## まずデモで動きを見る
+60日分の合成データに、時刻・前回の食事からの時間・週末を使う式とノイズを加えています。`--seed` と `--niterations` を指定できます。表示する R² は**学習に使った同じデータへの当てはまり**であり、未知データへの予測精度ではありません。式・モデルの一時ファイルは OS の一時フォルダに作成し、通常終了時に削除します。
 
-```bash
-.venv/bin/python pysr_experiment.py --demo
-```
+## 実記録への適用について
 
-正解のルールを仕込んだ合成データ（60日分・1時間単位）で実行します：
+この実験は `records.json` や健康 CSV を読み込まず、メメの記録を分析しません。任意に記録したデータでは、記録のない時間に行動や嘔吐がなかったと判断できず、嘔吐回数の未入力も 1 回ではありません。記録件数は活動や鳴き声の回数とも限りません。食事・水・トイレは嘔吐後に記録された可能性もあります。
 
-```
-y = 1.2 + 0.9 * sin(2*pi*(hour - 6)/24) + 3.0 / (1 + hours_since_food) + 0.3 * is_weekend + ノイズ
-```
-
-PySR がこれに近い式を再発見できれば成功です。出力の `equations_` 一覧が「単純な式 → 複雑な式」の順に並び、`selected equation` が自動選択された式、`R^2` が当てはまりの良さです。
-
-## 実データで使う
-
-project-meme 本体のエクスポート機能を使います。
-
-1. アプリからエクスポート ZIP を取得し、`records.json` を取り出す
-2. 実行する
-
-```bash
-# 活動パターン（1時間あたりの観察数）を説明する式を探す
-.venv/bin/python pysr_experiment.py --records records.json --target activity
-
-# 嘔吐（日単位の回数）を説明する式を探す
-.venv/bin/python pysr_experiment.py --records records.json --target vomit
-```
-
-健康 CSV エクスポートからでも嘔吐ターゲットは実行できます。
-
-```bash
-.venv/bin/python pysr_experiment.py --csv health.csv --target vomit
-```
-
-### 特徴量の設計メモ
-
-- `activity`：時刻、前回の食事イベントからの経過時間、その時間の食事/水分/トイレ回数、週末フラグ → 1時間あたりの観察数（活動・鳴き声の代理指標）
-- `vomit`：その日の食事/水分/トイレ回数、食事間隔の平均 → その日の嘔吐回数
-- 嘔吐レコードの `meal_interval_minutes` は「嘔吐時点」で記録される値なので、説明変数に入れると答えのリークになります。意図的に除外しています
-- サンプル行（`is_sample`）はデフォルトで除外。含めたい場合は `--include-sample`
-- 食欲（appetite）・元気さ（energy）は文字列カテゴリのため、順序尺度へのエンコード方針が決まるまで v1 では未使用
-
-### オプション
-
-- `--niterations N`：探索の反復回数（デフォルト 60。実データでは 100〜300 に上げると式の質が上がる代わりに時間がかかる）
-- `--seed N`：乱数シード（再現性のため固定可能）
-
-## 結果の読み方と次のステップ
-
-出てきた式は「確定した法則」ではなく「仮説の候補」です。おすすめの流れ：
-
-1. 単純で loss の小さい式を1つ選ぶ
-2. project-meme の辞書に仮説として登録する
-3. 以後の観察を根拠（supports / contradicts）として紐づけ、式が保つか観察する
-4. データが貯まったら再実行して式がどう変わるか見る
-
-## 注意
-
-- PySR が得意なのは低次元・数値化されたデータです。観察の自由記述テキストはそのままでは入りません（タグの有無を 0/1 特徴量にする拡張は可能）
-- 嘔吐のような稀なイベントは、記録が少ないうちは式が安定しません。まず activity で感触を掴むのがおすすめです
-- 実行するとカレントディレクトリに `hall_of_fame*.csv` / `*.pkl`（探索結果とモデル状態）が出力されます
+実記録に使うには、何をどの期間観察できたか、欠測とゼロ、時系列、評価方法を先に設計する必要があります。件数だけで適用可能とは判断できません。得られた式から意図、原因、健康状態を断定しません。
