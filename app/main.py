@@ -20,10 +20,11 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from .config import settings
 from .db import transaction
-from .models import Cat, Tag
+from .models import CallType, Cat, Tag
 from .observability import RequestContextMiddleware
 from .routers import admin, api, entries, media, pages
 from .security import SecurityMiddleware
+from .services import CALL_TYPE_PRESETS
 from .web import render, safe_jobs
 
 log = logging.getLogger('meme')
@@ -35,6 +36,8 @@ def initial_data():
         if not db.get(Cat, 1): db.add(Cat(id=1, name='メメ', notes=''))
         if not db.scalar(select(Tag.id).limit(1)):
             db.add_all(Tag(name=name) for name in ['食事前','ドアの前','遊び','帰宅','触れている','その他'])
+        if not db.scalar(select(CallType.id).limit(1)):
+            db.add_all(CallType(name=name, description=description) for name, description in CALL_TYPE_PRESETS)
 
 @asynccontextmanager
 async def lifespan(app):

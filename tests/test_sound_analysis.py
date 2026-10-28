@@ -48,9 +48,11 @@ def test_measure_reads_only_the_selected_interval(tmp_path):
         '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1',
         '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', str(path)],
         check=True, capture_output=True, timeout=15)
-    assert measure(path, 0, 900) == (0, 0)
-    rms, peak = measure(path, 1100, 1900)
+    rms, peak, features = measure(path, 0, 900)
+    assert (rms, peak) == (0, 0) and features['pitch_hz'] is None and features['voiced_ms'] == 0
+    rms, peak, features = measure(path, 1100, 1900)
     assert 0.087 < rms < 0.090 and 0.123 < peak < 0.126
+    assert 435 <= features['pitch_hz']['median'] <= 445 and features['contour'] == 'flat'
     with pytest.raises(HTTPException):
         measure(path, 1500, 2500)  # 音声は2秒で終わり、区間の半分しかない。
 
@@ -63,8 +65,13 @@ def test_sound_analysis_survives_deleted_original_and_appears_in_comparison(clie
                 {'start': '0', 'end': '0.1', 'hypothesis': '呼んでいるかも'}).status_code == 303
     report = client.get(f'/api/analysis/observations?ids={oid}').json()
     notes = report['observations'][0]['sound_notes']
-    assert notes == [{'media_id': mid, 'start_seconds': 0, 'end_seconds': 0.1, 'observation': '',
-                      'hypothesis': '呼んでいるかも', 'unknown': ''}]
+    assert len(notes) == 1
+    assert {key: notes[0][key] for key in ('media_id', 'start_seconds', 'end_seconds', 'observation',
+            'hypothesis', 'unknown', 'call_type', 'behaviors', 'meaning', 'outcome')} == {
+        'media_id': mid, 'start_seconds': 0, 'end_seconds': 0.1, 'observation': '',
+        'hypothesis': '呼んでいるかも', 'unknown': '', 'call_type': None, 'behaviors': [],
+        'meaning': None, 'outcome': None}
+    assert notes[0]['acoustic_features']['pitch_hz'] is None
     with transaction() as db:
         db.get(Media, mid).status = 'deleted'
     page = client.get(f'/entries/observation/{oid}').text
@@ -81,5 +88,5 @@ def test_measure_uses_the_default_audio_track_like_the_summary(tmp_path):
         '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1',
         '-map', '0:a', '-map', '1:a', '-c:a', 'aac', '-disposition:a:0', '0',
         '-disposition:a:1', 'default', str(path)], check=True, capture_output=True, timeout=15)
-    rms, peak = measure(path, 100, 900)
+    rms, peak, _ = measure(path, 100, 900)
     assert rms > 0.05 and peak > 0.1

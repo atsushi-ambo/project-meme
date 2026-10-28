@@ -104,27 +104,60 @@ GUESS_PRESETS = {
 }
 
 
+# 声の区間で見えた行動。意味や感情ではなく、見て分かる動きだけを並べる。
+BEHAVIORS = {
+    'look': 'こちらを見る', 'approach': '近づく・ついてくる', 'rub': 'すり寄る',
+    'paw': '前足で触る・つつく', 'lead': '先に歩いて振り返る', 'door': 'ドア・窓の前にいる',
+    'bowl': '食器・台所の前にいる', 'outside': '外や物を見ている', 'tail_up': 'しっぽを立てる',
+    'tail_move': 'しっぽを振る・打ちつける', 'ears_back': '耳を伏せる・横へ向ける',
+    'low': '体を低くする・固まる', 'roll': 'お腹を見せる・転がる', 'play': '走る・跳ぶ・追いかける',
+    'leave': '離れる・隠れる', 'groom': '毛づくろい', 'rest': '寝ている・くつろいでいる',
+}
+# 飼い主が見た、声のあとの様子。
+OUTCOMES = {
+    'settled': '鳴きやんだ・満足そうだった', 'repeated': '鳴き続けた・繰り返した',
+    'stronger': '声や動きが強くなった', 'left': '離れた・別のことを始めた', 'unknown': '分からない・見ていない',
+}
+# 初回起動時の鳴き声の種類。名前と説明は飼い主が変更・追加できる。
+CALL_TYPE_PRESETS = [
+    ('短い「ニャッ」', '短く切れる声'),
+    ('長い「ニャーオ」', '伸ばす声'),
+    ('「ンー」「ルルッ」', '口を閉じ気味の鼻にかかった声・転がるような声'),
+    ('小さい声・口だけ動く', 'ほとんど聞こえない声'),
+    ('「カカカ」', '外や虫を見ながら出す、歯を鳴らすような声'),
+    ('うなる・「シャー」', '低い声や息の音'),
+    ('ゴロゴロ', '喉を鳴らす音'),
+    ('まだ分からない', '種類を決めていない声'),
+]
+
+
+def resolve_guess(db, cat_id, choice):
+    """`preset:キー`または`item:辞書ID`を辞書の予想にする。候補は初回に辞書へ登録する。"""
+    prefix, _, value = choice.partition(':')
+    if prefix == 'preset' and value in GUESS_PRESETS:
+        title = GUESS_PRESETS[value]
+        item = db.scalar(select(DictionaryItem).where(DictionaryItem.cat_id == cat_id,
+            DictionaryItem.kind == 'hypothesis', DictionaryItem.title == title).order_by(DictionaryItem.id))
+        if item is None:
+            item = DictionaryItem(cat_id=cat_id, kind='hypothesis', title=title,
+                hypothesis=title, notes='入力候補から追加した飼い主の予想。意味が確定したものではありません。')
+            db.add(item)
+            db.flush()
+        return item
+    if prefix == 'item' and value.isdecimal() and len(value) <= 19 and int(value) <= 9223372036854775807:
+        item = db.get(DictionaryItem, int(value))
+        if not item or item.kind != 'hypothesis' or item.cat_id != cat_id:
+            raise HTTPException(422, 'この予想は選択できません。')
+        return item
+    raise HTTPException(422, '予想の選択内容を確認してください。')
+
+
 def add_guesses(db, observation_id, choices):
     # 他の観察から同じ候補を追加しても辞書が重複しないよう猫単位で直列化。
     db.scalar(select(Cat).where(Cat.id == 1).with_for_update())
     observation = parent(db, 'observation', observation_id, True)
     for choice in set(choices):
-        prefix, _, value = choice.partition(':')
-        if prefix == 'preset' and value in GUESS_PRESETS:
-            title = GUESS_PRESETS[value]
-            item = db.scalar(select(DictionaryItem).where(DictionaryItem.cat_id == observation.cat_id,
-                DictionaryItem.kind == 'hypothesis', DictionaryItem.title == title).order_by(DictionaryItem.id))
-            if item is None:
-                item = DictionaryItem(cat_id=observation.cat_id, kind='hypothesis', title=title,
-                    hypothesis=title, notes='入力候補から追加した飼い主の予想。意味が確定したものではありません。')
-                db.add(item)
-                db.flush()
-        elif prefix == 'item' and value.isdecimal() and len(value) <= 19 and int(value) <= 9223372036854775807:
-            item = db.get(DictionaryItem, int(value))
-            if not item or item.kind != 'hypothesis' or item.cat_id != observation.cat_id:
-                raise HTTPException(422, 'この予想は選択できません。')
-        else:
-            raise HTTPException(422, '予想の選択内容を確認してください。')
+        item = resolve_guess(db, observation.cat_id, choice)
         if db.get(Evidence, (item.id, observation.id)) is None:
             db.add(Evidence(dictionary_item_id=item.id, observation_id=observation.id,
                             assessment='unknown', rationale=''))

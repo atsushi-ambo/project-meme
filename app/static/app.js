@@ -164,3 +164,96 @@ if (photoButton) photoButton.addEventListener('click', async () => {
   } catch (error) { status.textContent = error.message; }
   finally { photoButton.disabled = false; }
 });
+
+// 動画を見ながら声の区間を選ぶ。音量の表示はPOSTで依頼したときだけ計算する。
+for (const picker of document.querySelectorAll('.sound-picker')) {
+  const player = picker.querySelector('video, audio');
+  const form = picker.querySelector('form');
+  const start = form.querySelector('input[name="start"]');
+  const end = form.querySelector('input[name="end"]');
+  const canvas = picker.querySelector('canvas.loudness');
+  const status = picker.querySelector('.picker-status');
+  const candidates = picker.querySelector('.candidates');
+  const duration = Number(picker.dataset.duration);
+  let levels = [];
+  let stopAt = null;
+  const seconds = value => Math.round(value * 1000) / 1000;
+  function draw() {
+    if (!levels.length) return;
+    const context = canvas.getContext('2d');
+    const width = canvas.width, height = canvas.height;
+    const peak = Math.max(...levels, 0.001);
+    const style = getComputedStyle(document.documentElement);
+    context.clearRect(0, 0, width, height);
+    const s = Number(start.value), e = Number(end.value);
+    if (start.value && end.value && e > s) {
+      context.fillStyle = '#e7ece2';
+      context.fillRect(s / 0.1 / levels.length * width, 0, (e - s) / 0.1 / levels.length * width, height);
+    }
+    context.fillStyle = style.getPropertyValue('--green') || '#355e4b';
+    const bar = width / levels.length;
+    levels.forEach((level, i) => {
+      const h = Math.max(1, level / peak * (height - 4));
+      context.fillRect(i * bar, height - h, Math.max(1, bar - 0.5), h);
+    });
+    context.fillStyle = style.getPropertyValue('--orange') || '#a3512b';
+    context.fillRect(player.currentTime / 0.1 / levels.length * width, 0, 2, height);
+  }
+  function choose(from, to) {
+    start.value = seconds(from);
+    end.value = seconds(Math.min(to, from + 10, duration));
+    player.currentTime = from;
+    draw();
+  }
+  picker.addEventListener('click', async event => {
+    const action = event.target.dataset?.action;
+    if (!action) return;
+    if (action === 'set-start') { start.value = seconds(player.currentTime); draw(); }
+    if (action === 'set-end') { end.value = seconds(player.currentTime); draw(); }
+    if (action === 'play-range' && start.value && end.value) {
+      player.currentTime = Number(start.value); stopAt = Number(end.value); player.play();
+    }
+    if (action === 'candidate') choose(Number(event.target.dataset.start), Number(event.target.dataset.end));
+    if (action === 'loudness') {
+      event.target.disabled = true;
+      status.textContent = '音量を計算しています…';
+      try {
+        const response = await fetch(`/api/observations/${picker.dataset.observation}/media/${picker.dataset.media}/loudness`, {
+          method: 'POST', headers: {'Content-Type': 'application/json',
+            'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content}, body: '{}'});
+        const data = await readApiResponse(response, '音量を計算できませんでした。');
+        levels = data.levels;
+        canvas.hidden = false;
+        candidates.replaceChildren();
+        const note = document.createElement('p');
+        note.className = 'muted';
+        note.textContent = data.candidates.length ?
+          `${data.notice} 押すとその区間を開始・終了に入れます。` : '周りより大きい音の区間は見つかりませんでした。';
+        candidates.append(note);
+        for (const span of data.candidates) {
+          const button = document.createElement('button');
+          button.type = 'button'; button.className = 'secondary';
+          button.dataset.action = 'candidate'; button.dataset.start = span.start; button.dataset.end = span.end;
+          button.textContent = `${span.start.toFixed(1)}〜${span.end.toFixed(1)}秒`;
+          candidates.append(button);
+        }
+        status.textContent = data.truncated ? '最初の3分だけを表示しています。' : '';
+        draw();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        event.target.disabled = false;
+      }
+    }
+  });
+  canvas.addEventListener('click', event => {
+    const rect = canvas.getBoundingClientRect();
+    player.currentTime = (event.clientX - rect.left) / rect.width * levels.length * 0.1;
+    draw();
+  });
+  player.addEventListener('timeupdate', () => {
+    if (stopAt !== null && player.currentTime >= stopAt) { player.pause(); stopAt = null; }
+    draw();
+  });
+  for (const input of [start, end]) input.addEventListener('input', draw);
+}

@@ -11,24 +11,53 @@
 <div class="card" id="upload" data-kind="{{ kind }}" data-id="{{ row.id }}"><h3>添付を追加</h3><p>HEVC/H.264のMOV・MP4、JPEG・PNG、M4A・MP3・WAV。1件 {{ settings.max_file_bytes|size }} まで。</p><p>iPhoneの動画はMOVのまま選んでください。拡張子の変更は不要です。ダウンロードから選ぶとアプリの保存領域へコピーし、元ファイルは残ります。</p><p class="muted">撮影日時は動画の情報から保存時に自動取得します。取得できない場合は「不明」と表示し、保存後に修正できます。</p><details><summary>撮影日時を手入力する（任意）</summary><label>撮影日時<input id="captured-at" type="datetime-local"></label><p class="muted">入力した日時を優先します。空欄なら自動取得します。</p></details><label>ファイルを選択<input id="media-file" type="file" accept=".mov,.mp4,.jpg,.jpeg,.png,.m4a,.mp3,.wav"></label><p id="file-info"></p><button type="button" id="upload-button">添付をMacBookに保存</button><p id="upload-status" role="status"></p><small>完了まではこの画面を開いてください。ブラウザで再生できない場合は原本をダウンロードして確認できます。</small></div>
 {% if kind=='observation' and not row.is_sample %}
 <section class="card" id="sound-analysis"><h2>声を記録して比べる</h2>
-<p>動画を再生して、メメの声や比較したい音が入った区間を秒で選びます。1回10秒まで。測定値には人の声や物音も含まれ、鳴き声の意味は判定できません。</p>
-{% for result, m in sound_results %}<article class="card"><h3>{{ m.original_name }} · {{ result.start_ms / 1000 }}〜{{ result.end_ms / 1000 }}秒</h3>
-{% if m.status == 'ready' and (m.keep or m.expires_at > now) %}<p><a href="/media/{{ m.id }}#t={{ result.start_ms / 1000 }},{{ result.end_ms / 1000 }}">元の動画・音声を確認</a></p>{% else %}<p>元の添付は現在利用できません。</p>{% endif %}
-<p>選んだ区間の音量：平均 {{ result.rms }}、最大 {{ result.peak }}（0〜1）</p><p class="muted">録音距離や端末の設定で値は変わります。異なる動画の数値をそのまま比較できません。</p>
+<p>動画を見ながら、メメの声が入った区間を選び、鳴き声の種類・そのときの行動・こちらの対応とその後を残します。同じ種類の声が集まると、<a href="/voices">鳴き声の傾向</a>で「どの声のとき、何が起きていたか」を見比べられます。</p>
+<p class="muted">1回10秒まで。できれば一声ずつ区切ると、声の高さと抑揚を比べやすくなります。測定値は音の物理的な特徴で、人の声や物音も含みます。種類や意味をアプリが判定することはありません。</p>
+{% macro label_fields(values, prefix) %}
+<label>鳴き声の種類<select name="call_type_id"><option value="">選ばない</option>{% for t in call_types %}<option value="{{ t.id }}" {% if values.call_type_id==t.id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select></label>
+<p class="muted"><a href="/voices#call-types">種類を追加・名前を変える</a></p>
+<label>この区間で鳴いた回数（任意）<input type="number" name="call_count" min="1" max="100" value="{{ values.call_count if values.call_count is not none else '' }}"></label>
+<fieldset><legend>そのときの行動（複数可）</legend><div class="tags guess-options">{% for key, label in behaviors.items() %}<label><input type="checkbox" name="behaviors" value="{{ key }}" {% if key in values.behaviors %}checked{% endif %}>{{ label }}</label>{% endfor %}</div></fieldset>
+<label>意味の予想<select name="meaning"><option value="">まだ選ばない</option>{% for item in items if item.kind=='hypothesis' %}<option value="item:{{ item.id }}" {% if values.meaning=='item:' ~ item.id %}selected{% endif %}>{{ item.title }}</option>{% endfor %}{% set titles = items|selectattr('kind', 'equalto', 'hypothesis')|map(attribute='title')|list %}{% for key, title in guess_presets.items() if title not in titles %}<option value="preset:{{ key }}">{{ title }}</option>{% endfor %}</select></label>
+<label>その予想とこの区間の関係<select name="assessment">{% for key, label in assessments.items() %}<option value="{{ key }}" {% if values.assessment==key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<p class="muted">例：ごはんを出したら鳴きやんだ →「ごはんがほしい」に合っていそう。分からないときは「まだ分からない」のままにします。</p>
+<label>こちらがしたこと（任意）<textarea name="owner_response" maxlength="1000" placeholder="例：声をかけた／ドアを開けた／何もしなかった">{{ values.owner_response }}</textarea></label>
+<label>そのあとのメメ<select name="outcome"><option value="">未入力</option>{% for key, label in outcomes.items() %}<option value="{{ key }}" {% if values.outcome==key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<label>聞こえたこと・見えたこと（任意）<textarea name="observation" maxlength="1000" placeholder="例：短く2回鳴いて、こちらを見た">{{ values.observation }}</textarea></label>
+<label>意味の予想のメモ（任意）<textarea name="hypothesis" maxlength="1000" placeholder="例：遊びたいのかもしれない">{{ values.hypothesis }}</textarea></label>
+<label>分からないこと（任意）<textarea name="unknown" maxlength="1000" placeholder="例：ごはんが関係あるかは不明">{{ values.unknown }}</textarea></label>
+{% endmacro %}
+{% for result, m, values in sound_results %}<article class="card sound-result" id="sound-{{ result.id }}"><h3>{{ m.original_name }} · {{ result.start_ms / 1000 }}〜{{ result.end_ms / 1000 }}秒{% if values.call_type_id %} <span class="pill">{{ call_type_names.get(values.call_type_id, '') }}</span>{% endif %}</h3>
+{% set available = m.status == 'ready' and (m.keep or m.expires_at > now) %}
+{% if available %}<p><a href="/media/{{ m.id }}#t={{ result.start_ms / 1000 }},{{ result.end_ms / 1000 }}">元の動画でこの区間を確認</a></p>{% else %}<p>元の添付は現在利用できません。</p>{% endif %}
+<dl class="media-facts sound-facts"><dt>音量</dt><dd>平均 {{ result.rms }}、最大 {{ result.peak }}（0〜1）</dd>
+{% set f = result.features %}{% if f %}<dt>声の高さ</dt><dd>{% if f.pitch_hz %}約{{ f.pitch_hz.median }}Hz（{{ f.pitch_hz.low }}〜{{ f.pitch_hz.high }}Hz、始め{{ f.pitch_hz.start }}→終わり{{ f.pitch_hz.end }}Hz）{% else %}周期的な音が見つかりませんでした{% endif %}</dd><dt>抑揚</dt><dd>{{ contours.get(f.contour, '判定できない') }}</dd><dt>声の長さ</dt><dd>高さを測れた部分 約{{ '%.1f'|format(f.voiced_ms / 1000) }}秒 · 大きい音 約{{ '%.1f'|format(f.sound_ms / 1000) }}秒</dd>{% endif %}</dl>
+<p class="muted">音量は録音距離や端末で変わるため、別の動画との比較には向きません。声の高さは距離の影響を受けにくい一方、人の声や物音を測る場合があります。</p>
+{% if not f and available %}<form method="post" action="/observations/{{ row.id }}/sound-result/{{ result.id }}/measure">{{ token(csrf) }}<button class="secondary">声の高さ・抑揚・長さも測る</button></form>{% endif %}
+<dl class="sound-labels">
+<dt>鳴いた回数</dt><dd>{{ values.call_count if values.call_count else '未入力' }}</dd>
+<dt>行動</dt><dd>{% for key in values.behaviors %}{{ behaviors.get(key, key) }}{{ '、' if not loop.last }}{% else %}未入力{% endfor %}</dd>
+<dt>意味の予想</dt><dd>{% if result.dictionary_item_id %}<a href="/dictionary/{{ result.dictionary_item_id }}">{{ item_titles.get(result.dictionary_item_id, '辞書の予想') }}</a> <span class="pill">{{ assessments.get(result.assessment) }}</span>{% else %}未選択{% endif %}</dd>
+<dt>こちらがしたこと</dt><dd class="preserve">{{ result.owner_response or '未入力' }}</dd>
+<dt>そのあと</dt><dd>{{ outcomes.get(result.outcome, '未入力') }}</dd></dl>
 {% if result.observation %}<p>聞こえたこと・見えたこと：{{ result.observation }}</p>{% endif %}
-{% if result.hypothesis %}<p>意味の予想：{{ result.hypothesis }}</p>{% endif %}
+{% if result.hypothesis %}<p>意味の予想のメモ：{{ result.hypothesis }}</p>{% endif %}
 {% if result.unknown %}<p>分からないこと：{{ result.unknown }}</p>{% endif %}
+<details><summary>分類・その後を書き足す</summary><form method="post" action="/observations/{{ row.id }}/sound-result/{{ result.id }}/labels">{{ token(csrf) }}{{ label_fields(values, 'edit') }}<button>この区間の記録を保存</button></form></details>
 <form method="post" action="/observations/{{ row.id }}/sound-result/{{ result.id }}/delete" data-confirm="この分析結果を削除しますか？ 元の記録と動画は残ります。">{{ token(csrf) }}<button class="secondary">この分析を削除</button></form></article>{% else %}<p>分析結果はまだありません。</p>{% endfor %}
 {% for m in media if m.status=='ready' and (m.keep or m.expires_at>now) and m.mime_type.startswith(('video/', 'audio/')) %}
-{% set info = technical[m.id] %}{% if info and info.audio and info.duration_seconds %}<details><summary>{{ m.original_name }}の区間を測る</summary>
+{% set info = technical[m.id] %}{% if info and info.audio and info.duration_seconds %}<details class="sound-picker" data-observation="{{ row.id }}" data-media="{{ m.id }}" data-duration="{{ info.duration_seconds }}"><summary>{{ m.original_name }}の声を区間で記録する</summary>
+{% if m.mime_type.startswith('video/') %}<video controls preload="metadata" playsinline src="/media/{{ m.id }}"></video>{% else %}<audio controls preload="metadata" src="/media/{{ m.id }}"></audio>{% endif %}
+<div class="picker-tools"><button type="button" class="secondary" data-action="loudness">音の大きい場所を表示</button><span class="muted picker-status" role="status"></span></div>
+<canvas class="loudness" width="1000" height="80" hidden aria-label="0.1秒ごとの音量。クリックした位置から再生します。"></canvas>
+<div class="candidates"></div>
 <form method="post" action="/observations/{{ row.id }}/sound/{{ m.id }}">{{ token(csrf) }}
-<label>開始（秒）<input type="number" name="start" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label>
-<label>終了（秒）<input type="number" name="end" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label>
-<label>聞こえたこと・見えたこと（任意）<textarea name="observation" maxlength="1000" placeholder="例：短く2回鳴いて、こちらを見た"></textarea></label>
-<label>意味の予想（任意）<textarea name="hypothesis" maxlength="1000" placeholder="例：遊びたいのかもしれない"></textarea></label>
-<label>分からないこと（任意）<textarea name="unknown" maxlength="1000" placeholder="例：ごはんが関係あるかは不明"></textarea></label>
+<div class="interval-fields"><label>開始（秒）<input type="number" name="start" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label><button type="button" class="secondary" data-action="set-start">今の位置を開始に</button>
+<label>終了（秒）<input type="number" name="end" min="0" max="{{ info.duration_seconds }}" step="0.001" required></label><button type="button" class="secondary" data-action="set-end">今の位置を終了に</button>
+<button type="button" class="secondary" data-action="play-range">選んだ区間を再生</button></div>
+{{ label_fields({'behaviors': [], 'assessment': 'unknown', 'call_count': none, 'owner_response': '', 'observation': '', 'hypothesis': '', 'unknown': ''}, 'new') }}
 <button>この区間を測って保存</button></form></details>{% elif info %}<p>{{ m.original_name }}は音声の形式または長さを確認できないため、区間を測れません。</p>{% else %}<p>{{ m.original_name }}は先に上の「動画・音声の基本情報を取得」を押してください。</p>{% endif %}{% endfor %}
-<p><a href="/compare">ほかの記録と比べる</a> · <a href="/dictionary">メメ辞書を見る</a></p></section>
+<p><a href="/voices">鳴き声の傾向を見る</a> · <a href="/compare">ほかの記録と比べる</a> · <a href="/dictionary">メメ辞書を見る</a></p></section>
 {% endif %}
 {% if kind=='observation' %}
 <details class="card optional-notes" id="optional-notes">
