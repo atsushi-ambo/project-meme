@@ -11,6 +11,7 @@
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 import anyio
 from fastapi import FastAPI, HTTPException
@@ -28,6 +29,9 @@ from .services import CALL_TYPE_PRESETS
 from .web import render, safe_jobs
 
 log = logging.getLogger('meme')
+
+# 保存するメディア・一時ファイルを、同じPCの他のOSユーザーから読めないようにする。
+os.umask(0o077)
 
 def initial_data():
     settings.media_root.mkdir(parents=True, exist_ok=True)

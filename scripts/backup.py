@@ -33,6 +33,8 @@ def backup(destination, *, restart=True, runner=None):
         with tarfile.open(destination/'media.tar','w') as archive:
             archive.add(media,arcname='media')
         (destination/'manifest.json').write_text(json.dumps({'format_version':1,'created_at':datetime.now().isoformat(),'complete':True}))
+        for item in destination.iterdir():
+            item.chmod(0o600)
         print(f'バックアップ完了: {destination}')
     finally:
         if running and restart: run(['start','web'])

@@ -423,3 +423,13 @@ update.pyはテスト・Python依存監査・候補アプリのOS監査・更新
 - 傾向は`build_voice_report`で、実記録（サンプル・削除中を除く）の最新5000区間を種類別・意味の予想別に集計する。件数・内訳・例だけを返し、確率や正解は作らない。区間5件未満または記録3件未満には少数の注意を付ける。
 - ローカルCLI用に`POST /api/observations/{id}/sounds`（新規、同じ区間は409）と`/sounds/{sid}/labels`（指定した項目だけ変更）を設ける。画面のフォームは全項目を送り置き換える。辞書項目を作りうるため、猫→観察→区間の順でロックする。
 - `prepare_analysis.py`の資料（format_version 2）に0.1秒ごとの音量、候補区間と特徴、候補の前後1秒の0.25秒間隔の静止画（最大120枚）、保存済みの区間と分類を含める。AIは候補ごとの見えた行動と時間を提案し、種類・意味・その後は飼い主の言葉だけを使い、確認後に保存する。
+
+## 権限の見直し（2026-10-28）
+
+参考資料（Webアプリケーションセキュリティ入門）の観点のうち、最小権限・多層防御・情報の読み取り防止を、DB・コンテナ・ファイル・ブラウザの各層で見直した。
+
+- DB：`a6d4e2f81c93`で`REVOKE ALL ON DATABASE ... FROM PUBLIC`、`REVOKE CREATE ON SCHEMA public FROM PUBLIC`、`meme_app`の`alembic_version`をSELECTのみにする。新規DBは`init-db.sh`でも同じにし、`meme_app`をNOSUPERUSER・NOCREATEDB・NOCREATEROLE・NOREPLICATION・NOBYPASSRLSで作る。テーブルのDELETEは全削除・期限処理で必要なため残す。所有者`meme_owner`は公式イメージの初期スーパーユーザーで、マイグレーション・バックアップだけに使う（分離は将来の課題）。
+- コンテナ：アプリ・マイグレーションは`read_only`＋`/tmp`のtmpfs。DBは`internal: true`のbackendネットワークだけ、webはbackendとポート公開用のfrontendに属する。テスト用のwebも読み取り専用で起動し、スモークテストで書き込み先の不足を検出する。
+- ファイル：アプリのumaskを077にし、メディア・エクスポート・一時ファイルを所有者だけが読めるようにする。setup.pyは保存先・下書き・分析資料のフォルダを700、`.env`を作成時から600にする。バックアップのファイルを600にする。
+- HTTP：`Cross-Origin-Resource-Policy: same-origin`（他サイトの`<img>`・`<video>`・`<script>`からの読み込みを拒否）、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`でカメラ・マイク等を無効化。既存のHost/Origin/CSRF/CSP/nosniffは維持。
+- 未対応・制限：同じOSユーザーのプロセスやDockerを操作できる人からは守れない。ディスク暗号化（FileVault）はOSの設定に任せる。参考資料のPDFは今回の作業環境から取得できず、リポジトリにまとめた方針を基準にした。

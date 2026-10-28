@@ -8,6 +8,7 @@ x-test-app: &test-app
   mem_limit: 2g
   cpus: 2
   pids_limit: 128
+  networks: [backend]
   environment: &test-env
     DATABASE_URL: postgresql+psycopg://meme_app:test-app-only@db:5432/meme
     SECRET_KEY: test-only-key-never-used-outside-disposable-environment
@@ -29,6 +30,7 @@ services:
     volumes:
       - postgres:/var/lib/postgresql
       - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    networks: [backend]
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U meme_owner -d meme']
       interval: 2s
@@ -49,6 +51,9 @@ services:
       migrate: {condition: service_completed_successfully}
   web:
     <<: *test-app
+    # 本番と同じく読み取り専用で起動し、スモークテストで書き込み先の不足を検出する。
+    read_only: true
+    tmpfs: ['/tmp:size=512m,mode=1777']
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
       interval: 2s
@@ -56,3 +61,6 @@ services:
       retries: 20
 volumes:
   postgres:
+networks:
+  backend:
+    internal: true
