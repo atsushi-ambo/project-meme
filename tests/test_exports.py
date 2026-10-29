@@ -10,6 +10,7 @@ import zipfile
 
 import anyio
 import pytest
+from starlette.requests import ClientDisconnect
 
 from app import exports
 from app.config import settings
@@ -77,22 +78,35 @@ def test_export_transaction_failure_removes_completed_archive(client, monkeypatc
 
 
 @pytest.mark.parametrize('failure', [OSError, asyncio.CancelledError])
-def test_export_response_failure_removes_archive(tmp_path, failure):
+@pytest.mark.parametrize('spec_version', ['2.0', '2.4'])
+def test_export_response_failure_removes_archive(tmp_path, failure, spec_version):
     path = tmp_path / 'export-test.zip'
     path.write_bytes(b'zip fixture')
 
-    async def receive():
-        return {'type': 'http.disconnect'}
-
-    async def send(message):
-        if message['type'] == 'http.response.body':
-            raise failure()
-
     async def respond():
-        await exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': []}, receive, send)
+        failed = anyio.Event()
+        injected = failure('simulated send failure')
 
-    with pytest.raises(failure):
-        anyio.run(respond)
+        async def receive():
+            # 即座に切断を返すと、送信処理へ到達する前にキャンセルされる。
+            await failed.wait()
+            return {'type': 'http.disconnect'}
+
+        async def send(message):
+            if message['type'] == 'http.response.body':
+                failed.set()
+                raise injected
+
+        try:
+            with anyio.fail_after(5):
+                await exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': [],
+                    'asgi': {'spec_version': spec_version}}, receive, send)
+        except (failure, ClientDisconnect) as exc:
+            # Starletteの再送出の有無に依存せず、タイムアウト等の別の失敗は通さない。
+            assert exc is injected or isinstance(exc, ClientDisconnect)
+        assert failed.is_set()
+
+    anyio.run(respond)
     assert not path.exists()
 
 
@@ -126,3 +140,44 @@ def test_maintenance_removes_stale_exports(client):
     os.utime(path, (at.timestamp() - 86401,) * 2)
     run_jobs(at)
     assert not path.exists()
+
+
+@pytest.mark.parametrize('active', [False, True])
+def test_delete_all_removes_recent_exports_and_waits_for_download(client, active):
+    directory = settings.media_root / '.exports'
+    directory.mkdir(exist_ok=True)
+    path = directory / 'export-recent.zip'
+    path.write_bytes(b'private fixture')
+    marker = settings.media_root / 'deleting-all'
+    with path.open('rb') as handle:
+        if active:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        assert post(client, '/delete-all', {'confirm': 'メメの全記録を削除'}).status_code == 303
+        assert path.exists() == active
+        assert marker.exists() == active
+        if active:
+            run_jobs()
+            assert path.exists() and marker.exists()
+            assert post(client, '/export', {'confirm': '出力'}).status_code == 409
+    run_jobs()
+    assert not path.exists() and not marker.exists()
+
+
+def test_delete_all_keeps_marker_when_export_removal_fails(client, monkeypatch):
+    directory = settings.media_root / '.exports'
+    directory.mkdir(exist_ok=True)
+    path = directory / 'export-recent.zip'
+    path.write_bytes(b'private fixture')
+    unlink = Path.unlink
+
+    def fail(archive, *args, **kwargs):
+        if archive == path:
+            raise PermissionError('simulated')
+        return unlink(archive, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'unlink', fail)
+        assert post(client, '/delete-all', {'confirm': 'メメの全記録を削除'}).status_code == 303
+    assert path.exists() and (settings.media_root / 'deleting-all').exists()
+    run_jobs()
+    assert not path.exists() and not (settings.media_root / 'deleting-all').exists()

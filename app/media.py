@@ -249,7 +249,8 @@ def run_jobs(at=None):
     at = at or now()
     with transaction(exclusive=True) as db:
         from .exports import cleanup_exports
-        cleanup_exports(at)
+        marker = settings.media_root / 'deleting-all'
+        exports_removed = cleanup_exports(at, all_ages=marker.exists())
         rows = list(db.scalars(select(Media).with_for_update()))
         for row in rows:
             stale = row.status == 'pending' and row.created_at < at - timedelta(minutes=15)
@@ -283,10 +284,9 @@ def run_jobs(at=None):
                     if path.stat().st_mtime < at.timestamp() - 900:
                         path.unlink()
 
-        marker = settings.media_root / 'deleting-all'
         if marker.exists():
             # 停止が削除要求のcommit前だった場合も全削除を再開する。
-            remaining = False
+            remaining = not exports_removed
             for model in (Observation, Health):
                 for entry in db.scalars(select(model)):
                     remaining = True

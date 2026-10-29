@@ -125,6 +125,49 @@ def test_api_label_update_merges_and_validates(client, meow_video):
     assert client.post(url, json={'outcome': 'left'}, headers={'Origin': 'http://localhost:8000'}).status_code == 403
 
 
+@pytest.mark.parametrize('assessment', ['supports', 'contradicts'])
+@pytest.mark.parametrize('change', ['preset', 'item', 'clear', 'same_preset', 'same_item', 'unrelated', 'explicit'])
+def test_api_meaning_change_resets_only_implicit_assessment(client, meow_video, assessment, change):
+    oid, mid = saved(client, meow_video)
+    created = api(client, f'/api/observations/{oid}/sounds', {
+        'media_id': mid, 'start': '0.5', 'end': '1.1',
+        'meaning': 'preset:food', 'assessment': assessment, 'owner_response': '声をかけた'})
+    assert created.status_code == 200, created.text
+    body = created.json()
+    old_id = body['meaning']['id']
+    with transaction() as db:
+        other = DictionaryItem(cat_id=1, kind='hypothesis', title='別の予想', hypothesis='遊びたいかもしれない')
+        db.add(other)
+        db.flush()
+        other_id = other.id
+    explicit = 'contradicts' if assessment == 'supports' else 'supports'
+    payload = {
+        'preset': {'meaning': 'preset:play'},
+        'item': {'meaning': f'item:{other_id}'},
+        'clear': {'meaning': ''},
+        'same_preset': {'meaning': 'preset:food'},
+        'same_item': {'meaning': f'item:{old_id}'},
+        'unrelated': {'outcome': 'left'},
+        'explicit': {'meaning': 'preset:play', 'assessment': explicit},
+    }[change]
+    response = api(client, f'/api/observations/{oid}/sounds/{body["id"]}/labels', payload)
+    assert response.status_code == 200, response.text
+    expected = ('unknown' if change in {'preset', 'item', 'clear'} else
+                explicit if change == 'explicit' else assessment)
+    with transaction() as db:
+        result = db.get(SoundAnalysis, body['id'])
+        assert result.assessment == expected
+        assert result.owner_response == '声をかけた'
+        if change == 'clear':
+            assert result.dictionary_item_id is None
+        elif change in {'same_preset', 'same_item', 'unrelated'}:
+            assert result.dictionary_item_id == old_id
+        elif change == 'item':
+            assert result.dictionary_item_id == other_id
+        else:
+            assert result.dictionary_item_id != old_id
+
+
 def test_loudness_candidates_and_remeasure(client, meow_video):
     oid, mid = saved(client, meow_video)
     url = f'/api/observations/{oid}/media/{mid}/loudness'

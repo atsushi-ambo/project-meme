@@ -168,6 +168,8 @@ def test_backup_is_consistent_and_controls_restart(updater, tmp_path, monkeypatc
     media = tmp_path / 'media'
     media.mkdir()
     (media / 'test.txt').write_text('private test fixture')
+    (media / '.exports').mkdir()
+    (media / '.exports' / 'export-recent.zip').write_bytes(b'private export fixture')
     monkeypatch.setattr(backup, 'ROOT', tmp_path / 'repo')
     monkeypatch.setattr(backup, 'env_values', lambda: {'MEDIA_DIR': str(media)})
     calls = []
@@ -180,6 +182,8 @@ def test_backup_is_consistent_and_controls_restart(updater, tmp_path, monkeypatc
     assert calls == ['ps', 'stop', 'exec'] + (['start'] if restart else [])
     assert json.loads((dest / 'manifest.json').read_text())['complete']
     assert (dest / 'database.dump').read_bytes() == b'test dump'
+    with tarfile.open(dest / 'media.tar') as archive:
+        assert archive.getnames() == ['media', 'media/test.txt']
     assert dest.stat().st_mode & 0o777 == 0o700
 
 

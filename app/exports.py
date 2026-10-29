@@ -32,7 +32,7 @@ class ExportResponse(FileResponse):
             path.unlink(missing_ok=True)
 
 
-def cleanup_exports(at):
+def cleanup_exports(at, *, all_ages=False):
     """生成処理と競合しないよう、呼び出し側の排他保守ロック内で清掃する。"""
     for path in (settings.media_root / '.exports').glob('export-*.zip'):
         if path.is_symlink():
@@ -43,10 +43,12 @@ def cleanup_exports(at):
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     continue
-                if os.fstat(handle.fileno()).st_mtime < at.timestamp() - 86400:
+                if all_ages or os.fstat(handle.fileno()).st_mtime < at.timestamp() - 86400:
                     path.unlink(missing_ok=True)
         except FileNotFoundError:
             pass  # 応答の終了が先に削除した。
+    # 転送中のZIPが残る間は全削除を完了させない。
+    return not any((settings.media_root / '.exports').glob('export-*.zip'))
 
 
 # Excel等がセルの内容を式として実行しないようにする。

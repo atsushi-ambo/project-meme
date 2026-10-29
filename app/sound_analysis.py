@@ -109,16 +109,18 @@ def labels(raw):
         raise HTTPException(422, '鳴き声の種類・回数・行動・その後・メモ（各1000文字以内）を確認してください。')
 
 
-def apply_labels(db, result, observation, data):
+def apply_labels(db, result, observation, data, *, assessment_explicit=True):
     if data.call_type_id is not None and db.get(CallType, data.call_type_id) is None:
         raise HTTPException(422, '鳴き声の種類を選び直してください。')
     item = resolve_guess(db, observation.cat_id, data.meaning) if data.meaning else None
+    # 同じ予想の別表記では評価を保ち、予想が変わったら以前の評価を引き継がない。
+    meaning_changed = result.dictionary_item_id != (item.id if item else None)
     result.call_type_id = data.call_type_id
     result.call_count = data.call_count
     result.owner_response = data.owner_response
     result.outcome = data.outcome
     result.dictionary_item_id = item.id if item else None
-    result.assessment = data.assessment if item else 'unknown'
+    result.assessment = data.assessment if item and (assessment_explicit or not meaning_changed) else 'unknown'
     result.observation, result.hypothesis, result.unknown = data.observation, data.hypothesis, data.unknown
     db.flush()
     db.execute(delete(SoundBehavior).where(SoundBehavior.sound_analysis_id == result.id))
@@ -171,7 +173,7 @@ def update_labels(db, observation_id, result_id, raw, *, merge=False):
     if merge:
         from .voices import label_values
         data = labels({**label_values(db, result), **raw})
-    apply_labels(db, result, row, data)
+    apply_labels(db, result, row, data, assessment_explicit='assessment' in raw)
     result.updated_at = now()
     return result
 
