@@ -1,5 +1,4 @@
 """出力ZIPの保存先・権限と、失敗・異常停止後の後片付けを確認する。"""
-import asyncio
 from contextlib import contextmanager
 import fcntl
 import io
@@ -76,23 +75,33 @@ def test_export_transaction_failure_removes_completed_archive(client, monkeypatc
     assert list((settings.media_root / '.exports').iterdir()) == []
 
 
-@pytest.mark.parametrize('failure', [OSError, asyncio.CancelledError])
+@pytest.mark.parametrize('failure', ['send_error', 'cancelled'])
 def test_export_response_failure_removes_archive(tmp_path, failure):
     path = tmp_path / 'export-test.zip'
     path.write_bytes(b'zip fixture')
 
     async def receive():
-        return {'type': 'http.disconnect'}
+        # 切断通知を送るとStarletteの版により送信自体が止まるため、送らない。
+        await anyio.sleep_forever()
 
     async def send(message):
         if message['type'] == 'http.response.body':
-            raise failure()
+            if failure == 'send_error':
+                raise OSError('client connection lost')
+            await anyio.sleep_forever()  # 遅いダウンロードの途中で外から中断される。
 
     async def respond():
-        await exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': []}, receive, send)
+        response = exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': []}, receive, send)
+        if failure == 'send_error':
+            with pytest.raises(OSError):
+                await response
+        else:
+            # 切断やサーバー停止では、リクエストを処理するタスクが外側から取り消される。
+            with anyio.move_on_after(0.2) as scope:
+                await response
+            assert scope.cancelled_caught
 
-    with pytest.raises(failure):
-        anyio.run(respond)
+    anyio.run(respond)
     assert not path.exists()
 
 
