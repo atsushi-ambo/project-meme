@@ -28,16 +28,21 @@ def sound_draft_choices(raw):
     from ..services import ASSESSMENTS, BEHAVIORS, GUESS_PRESETS, OUTCOMES
     def pick(value):
         return value if isinstance(value, str) else ''
-    choices = []
-    with transaction() as db:
-        call_type = pick(raw.get('call_type_id'))
-        name = db.get(CallType, int(call_type)) if call_type.isdecimal() and len(call_type) <= 18 else None
-        choices.append(('鳴き声の種類', name.name if name else '選ばない'))
-        meaning = pick(raw.get('meaning'))
-        prefix, _, value = meaning.partition(':')
-        item = db.get(DictionaryItem, int(value)) if prefix == 'item' and value.isdecimal() and len(value) <= 18 else None
-        title = item.title if item else GUESS_PRESETS.get(value, '') if prefix == 'preset' else ''
-        choices.append(('意味の予想', title or 'まだ選ばない'))
+    call_type, meaning = pick(raw.get('call_type_id')), pick(raw.get('meaning'))
+    prefix, _, value = meaning.partition(':')
+    # 保守ロック中などで名前を引けなくても、送信した値のまま下書きを残す。
+    choices = [('鳴き声の種類', f'ID {call_type}' if call_type else '選ばない'),
+               ('意味の予想', GUESS_PRESETS.get(value, meaning) if prefix == 'preset' else meaning or 'まだ選ばない')]
+    try:
+        with transaction() as db:
+            name = db.get(CallType, int(call_type)) if call_type.isdecimal() and len(call_type) <= 18 else None
+            item = db.get(DictionaryItem, int(value)) if prefix == 'item' and value.isdecimal() and len(value) <= 18 else None
+            if name:
+                choices[0] = ('鳴き声の種類', name.name)
+            if item:
+                choices[1] = ('意味の予想', item.title)
+    except Exception:
+        pass
     behaviors = raw.get('behaviors') if isinstance(raw.get('behaviors'), list) else []
     choices += [('この区間で鳴いた回数', pick(raw.get('call_count')) or '未入力'),
                 ('そのときの行動', '、'.join(BEHAVIORS.get(b, b) for b in behaviors) or '未入力'),

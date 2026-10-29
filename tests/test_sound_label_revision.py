@@ -126,3 +126,24 @@ def test_json_revision_is_not_coerced(client, labelled_sound, invalid):
         'expected_revision': invalid, 'assessment': 'contradicts'})
     assert response.status_code == 409
     assert snapshot(sid) == before
+
+
+def test_conflict_page_keeps_draft_while_maintenance_lock_is_held(client, labelled_sound, monkeypatch):
+    oid, sid, initial = labelled_sound
+    from contextlib import contextmanager
+    from fastapi import HTTPException
+    from app.routers import entries
+
+    @contextmanager
+    def locked():
+        # 出力中の保守ロックと同じく、DB処理を409で断る。
+        raise HTTPException(409, '保守処理中です。少し待ってから再試行してください。')
+        yield
+
+    monkeypatch.setattr(entries, 'transaction', locked)
+    response = post(client, f'/observations/{oid}/sound-result/{sid}/labels', {
+        'expected_revision': str(initial['revision']), 'meaning': 'preset:play', 'assessment': 'supports',
+        'observation': 'ロック中に書いた架空の観察', 'owner_response': '', 'hypothesis': '', 'unknown': '',
+        'behaviors': ['look']})
+    assert response.status_code == 409
+    assert all(text in response.text for text in ['ロック中に書いた架空の観察', '遊びたい', '合っていそう', 'こちらを見る'])
