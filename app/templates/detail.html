@@ -14,6 +14,7 @@
 <p>動画を見ながら、メメの声が入った区間を選び、鳴き声の種類・そのときの行動・こちらの対応とその後を残します。同じ種類の声が集まると、<a href="/voices">鳴き声の傾向</a>で「どの声のとき、何が起きていたか」を見比べられます。</p>
 <p class="muted">1回10秒まで。できれば一声ずつ区切ると、声の高さと抑揚を比べやすくなります。測定値は音の物理的な特徴で、人の声や物音も含みます。種類や意味をアプリが判定することはありません。</p>
 {% macro label_fields(values, prefix) %}
+{% if prefix=='edit' %}<input type="hidden" name="expected_revision" value="{{ values.revision }}">{% endif %}
 <label>鳴き声の種類<select name="call_type_id"><option value="">選ばない</option>{% for t in call_types %}<option value="{{ t.id }}" {% if values.call_type_id==t.id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select></label>
 <p class="muted"><a href="/voices#call-types">種類を追加・名前を変える</a></p>
 <label>この区間で鳴いた回数（任意）<input type="number" name="call_count" min="1" max="100" value="{{ values.call_count if values.call_count is not none else '' }}"></label>

@@ -96,7 +96,7 @@ def test_segment_labels_pitch_and_trends(client, meow_video):
 
     # あとから分かったことを書き足す。測定値は変えない。
     response = post(client, f'/observations/{oid}/sound-result/{result_id}/labels',
-                    {'call_type_id': '', 'outcome': 'left', 'owner_response': '撫でた'})
+                    {'expected_revision': result.revision, 'call_type_id': '', 'outcome': 'left', 'owner_response': '撫でた'})
     assert response.status_code == 303
     with transaction() as db:
         result = db.get(SoundAnalysis, result_id)
@@ -111,15 +111,16 @@ def test_api_label_update_merges_and_validates(client, meow_video):
         'media_id': mid, 'start': '0.5', 'end': '1.1', 'behaviors': ['look'], 'owner_response': '声をかけた'})
     assert created.status_code == 200, created.text
     body = created.json()
+    assert body['revision'] == 1
     assert body['call_type'] is None and body['features']['pitch_hz']
     assert api(client, f'/api/observations/{oid}/sounds', {'media_id': mid, 'start': '0.5', 'end': '1.1'}).status_code == 409
     url = f'/api/observations/{oid}/sounds/{body["id"]}/labels'
-    updated = api(client, url, {'outcome': 'settled'}).json()
+    updated = api(client, url, {'expected_revision': body['revision'], 'outcome': 'settled'}).json()
     assert updated['outcome']['key'] == 'settled' and updated['owner_response'] == '声をかけた'
     assert [b['key'] for b in updated['behaviors']] == ['look']
     for bad in [{'behaviors': ['meow_means_food']}, {'outcome': 'happy'}, {'call_type_id': 999999},
                 {'meaning': 'preset:nope'}, {'call_count': 0}, {'unexpected': 1}]:
-        assert api(client, url, bad).status_code in (404, 422), bad
+        assert api(client, url, {'expected_revision': updated['revision'], **bad}).status_code in (404, 422), bad
     other = observation(client, '別の記録')
     assert api(client, f'/api/observations/{other}/sounds/{body["id"]}/labels', {'outcome': 'left'}).status_code == 404
     assert client.post(url, json={'outcome': 'left'}, headers={'Origin': 'http://localhost:8000'}).status_code == 403
@@ -150,7 +151,7 @@ def test_api_meaning_change_resets_only_implicit_assessment(client, meow_video, 
         'unrelated': {'outcome': 'left'},
         'explicit': {'meaning': 'preset:play', 'assessment': explicit},
     }[change]
-    response = api(client, f'/api/observations/{oid}/sounds/{body["id"]}/labels', payload)
+    response = api(client, f'/api/observations/{oid}/sounds/{body["id"]}/labels', {'expected_revision': body['revision'], **payload})
     assert response.status_code == 200, response.text
     expected = ('unknown' if change in {'preset', 'item', 'clear'} else
                 explicit if change == 'explicit' else assessment)
@@ -276,7 +277,7 @@ def test_form_meaning_assessment_binding(client, meow_video, assessment, change)
     assert 'name="assessment_for" value=""' in page
     meaning = old_meaning if change == 'unchanged' else '' if change == 'clear' else 'preset:play'
     response = post(client, f'/observations/{oid}/sound-result/{body["id"]}/labels', {
-        'meaning': meaning, 'assessment': assessment,
+        'expected_revision': body['revision'], 'meaning': meaning, 'assessment': assessment,
         'assessment_for': meaning if change == 'reselected' else old_meaning})
     assert response.status_code == 303, response.text
     with transaction() as db:

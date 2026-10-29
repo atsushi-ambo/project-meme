@@ -37,9 +37,10 @@ def preview(value, maximum=NOTE_PREVIEW):
 
 
 def label_values(db, result):
-    """SoundLabelsInputへそのまま渡せる現在の分類。"""
+    """現在の分類と、編集前に確認する版番号。"""
     item = db.get(DictionaryItem, result.dictionary_item_id) if result.dictionary_item_id else None
     return {
+        'revision': result.revision,
         'call_type_id': result.call_type_id, 'call_count': result.call_count,
         'behaviors': list(db.scalars(select(SoundBehavior.behavior).where(
             SoundBehavior.sound_analysis_id == result.id).order_by(SoundBehavior.behavior))),
@@ -70,7 +71,7 @@ def segment(result, media, observation, call_type, item, behaviors, tags, at, *,
         else:
             notes[name], notes[name + '_truncated'] = preview(value)
     return {
-        'id': result.id, 'observation_id': observation.id,
+        'id': result.id, 'revision': result.revision, 'observation_id': observation.id,
         'observation_url': f'/entries/observation/{observation.id}#sound-{result.id}',
         'occurred_at': local_time(observation.occurred_at), 'location': observation.location,
         'tags': tags, 'media_id': media.id, 'media_name': media.original_name,
