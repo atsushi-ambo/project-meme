@@ -2,6 +2,7 @@
 {% macro counts(rows, empty='まだありません') %}{% for r in rows %}<span class="count-chip">{{ r.label }} <b>{{ r.count }}</b></span>{% else %}<span class="muted">{{ empty }}</span>{% endfor %}{% endmacro %}
 {% macro assessment_counts(c) %}<span class="count-chip">合っていそう <b>{{ c.supports }}</b></span><span class="count-chip">合わなそう <b>{{ c.contradicts }}</b></span><span class="count-chip">まだ分からない <b>{{ c.unknown }}</b></span>{% endmacro %}
 {% macro example(s) %}<li><a href="{{ s.observation_url }}">{{ s.occurred_at|isotime }}</a> · {{ s.start_seconds }}〜{{ s.end_seconds }}秒{% if s.call_type %} · {{ s.call_type.name }}{% endif %}{% if s.features and s.features.pitch_hz %} · 約{{ s.features.pitch_hz.median }}Hz・{{ contours.get(s.features.contour) }}{% endif %}{% if s.behaviors %} · {% for b in s.behaviors %}{{ b.label }}{{ '、' if not loop.last }}{% endfor %}{% endif %}{% if s.meaning %} · 予想「{{ s.meaning.title }}」{{ s.meaning.assessment_label }}{% endif %}{% if s.outcome %} · そのあと：{{ s.outcome.label }}{% endif %}{% if s.media_url %} · <a href="{{ s.media_url }}">区間を再生</a>{% endif %}{% if s.observation %}<br><span class="muted">{{ s.observation }}{% if s.observation_truncated %}…{% endif %}</span>{% endif %}</li>{% endmacro %}
+{% macro marker(kind, x, y, color, size=5) %}{% if kind=='circle' %}<circle class="dot" cx="{{ x }}" cy="{{ y }}" r="{{ size }}" fill="{{ color }}"/>{% elif kind=='square' %}<rect class="dot" x="{{ x - size }}" y="{{ y - size }}" width="{{ size * 2 }}" height="{{ size * 2 }}" rx="1.5" fill="{{ color }}"/>{% elif kind=='triangle' %}<polygon class="dot" points="{{ x }},{{ y - size - 1 }} {{ x - size - 1 }},{{ y + size }} {{ x + size + 1 }},{{ y + size }}" fill="{{ color }}"/>{% else %}<polygon class="dot" points="{{ x }},{{ y - size - 1 }} {{ x + size + 1 }},{{ y }} {{ x }},{{ y + size + 1 }} {{ x - size - 1 }},{{ y }}" fill="{{ color }}"/>{% endif %}{% endmacro %}
 {% block content %}
 <div class="section-title"><div><p class="eyebrow">VOICES</p><h1>鳴き声の傾向</h1></div><a class="button secondary" href="/api/analysis/voices" download="meme-voices.json">資料を保存（JSON）</a></div>
 <p>記録の画面で区間を選んで付けた「鳴き声の種類・行動・その後・意味の予想」を集めて、どの声のときに何が起きていたかを両方向から見比べます。</p>
@@ -15,9 +16,21 @@
 {% if report.totals.with_pitch < report.totals.segments %}<li>声の高さを測っていない区間があります。記録の画面の「声の高さ・抑揚・長さも測る」で追加できます。</li>{% endif %}
 <li>同じ種類の声で予想と合わない例（「合わなそう」）も残すと、思い込みに気づけます。</li>
 <li>意味を確かめるには、同じ声のときに予想した対応をして、鳴きやむか・満足そうかを見ます。毎回は試さず、メメの負担にならない範囲で。</li></ul></details>
+{% set vm = report.voice_map %}{% if vm %}<section class="card" id="voice-map"><h2>声の地図</h2>
+<p>保存した声を、長さ（横）と高さ（縦）で並べました。同じ種類の声が近くに集まっていれば、聞き分けが音の特徴とも合っています。点を押すとその記録を開きます。</p>
+<div class="map-legend">{% for l in vm.legend %}<span><svg viewBox="0 0 12 12" aria-hidden="true">{{ marker(l.marker, 6, 6, l.color, 4) }}</svg>{{ l.name }} {{ l.count }}件</span>{% endfor %}</div>
+<svg class="voice-map" viewBox="0 0 {{ vm.width }} {{ vm.height }}" role="img" aria-label="声の長さと高さの散布図。{{ vm.count }}件。">
+{% for t in vm.y_ticks %}<line class="axis" x1="{{ vm.pad }}" x2="{{ vm.width - 8 }}" y1="{{ t.y }}" y2="{{ t.y }}"/><text x="{{ vm.pad - 6 }}" y="{{ t.y + 4 }}" text-anchor="end">{{ t.label }}</text>{% endfor %}
+{% for t in vm.x_ticks %}<text x="{{ t.x }}" y="{{ vm.height - vm.pad + 18 }}" text-anchor="middle">{{ t.label }}</text>{% endfor %}
+<line class="axis" x1="{{ vm.pad }}" x2="{{ vm.width - 8 }}" y1="{{ vm.height - vm.pad }}" y2="{{ vm.height - vm.pad }}"/>
+<text x="{{ vm.width - 8 }}" y="{{ vm.height - 6 }}" text-anchor="end">声が続いた長さ</text><text x="8" y="16">声の高さ</text>
+{% for d in vm.dots %}<a href="{{ d.url }}"><title>{{ d.label }}</title>{{ marker(d.marker, d.x, d.y, d.color) }}</a>{% endfor %}
+</svg>
+<p class="muted">色は件数の多い3種類まで（見分けやすさのため）。それ以外は灰色の「その他・未選択」です。高さは声の中央値で、人の声や物音が混ざると外れた位置に出ることがあります。数値の一覧は下の例とJSONにあります。</p></section>{% endif %}
 <h2 id="by-type">鳴き声の種類から見る</h2>
 <div class="voice-grid">{% for g in report.call_types %}<article class="card"><h3>{{ g.name }}</h3>{% if g.description %}<p class="muted">{{ g.description }}</p>{% endif %}
 <p>区間 {{ g.segments }}件 · 記録 {{ g.observations }}件</p>{% if g.few_examples_notice %}<p class="warning">{{ g.few_examples_notice }}</p>{% endif %}
+{% if g.shape_lines %}<div class="shape-row"><svg class="voice-shape shape-overlay" viewBox="0 0 120 36" role="img" aria-label="{{ g.name }}の声のかたち {{ g.shape_lines|length }}件を重ねた図"><line x1="0" y1="18" x2="120" y2="18" class="shape-mid"/>{% for line in g.shape_lines %}<polyline points="{{ line }}" class="shape-line"/>{% endfor %}</svg><span class="muted">声のかたち {{ g.shape_lines|length }}件を重ねた図（線がそろうほど似た抑揚）</span></div>{% endif %}
 <dl class="voice-facts">
 <dt>声の高さ</dt><dd>{% if g.acoustics.pitch_hz %}{% if g.acoustics.measured_segments > 1 %}区間ごとの中央値 {{ g.acoustics.pitch_hz.min }}〜{{ g.acoustics.pitch_hz.max }}Hz（中央 約{{ g.acoustics.pitch_hz.median }}Hz、{{ g.acoustics.measured_segments }}件）{% else %}約{{ g.acoustics.pitch_hz.median }}Hz（1件）{% endif %}{% else %}<span class="muted">未測定</span>{% endif %}</dd>
 <dt>抑揚</dt><dd>{{ counts(g.acoustics.contours, '未測定') }}</dd>

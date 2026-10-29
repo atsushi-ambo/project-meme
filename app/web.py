@@ -10,6 +10,7 @@ from .models import Comment, Observation, now
 from .schemas import JST, RecordId, parse_time
 from .security import token_matches
 from .acoustics import CONTOURS
+from .voice_match import sparkline
 from .services import ASSESSMENTS, BEHAVIORS, CONDITIONS, GUESS_PRESETS, LABELS, LOCATIONS, OUTCOMES
 from .config import settings
 from .profile_photo import photo_path
@@ -25,7 +26,7 @@ templates.env.filters['size'] = lambda v: f'{(v or 0)/1_000_000:.1f} MB'
 def render(request, template, **context):
     return templates.TemplateResponse(request=request, name=template, context={
         'has_profile_photo': photo_path().is_file(), 'csrf': request.state.csrf, 'labels': LABELS, 'assessments': ASSESSMENTS,
-        'conditions': CONDITIONS, 'locations': LOCATIONS, 'guess_presets': GUESS_PRESETS, 'behaviors': BEHAVIORS, 'outcomes': OUTCOMES, 'contours': CONTOURS, 'now': now(), 'timedelta': timedelta, 'settings': settings, **context})
+        'conditions': CONDITIONS, 'locations': LOCATIONS, 'guess_presets': GUESS_PRESETS, 'behaviors': BEHAVIORS, 'outcomes': OUTCOMES, 'contours': CONTOURS, 'sparkline': sparkline, 'now': now(), 'timedelta': timedelta, 'settings': settings, **context})
 
 def safe_jobs():
     try:
