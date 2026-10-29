@@ -8,10 +8,11 @@ from ..analysis import build_comparison, technical_summary
 from ..db import transaction
 from ..exports import health_csv
 from ..media import used_bytes
-from ..models import Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, SoundAnalysis, Tag
+from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, SoundAnalysis, Tag
 from ..reviews import build_weekly_review
 from ..schemas import RecordId
 from ..services import LABELS, parent
+from ..voices import build_voice_report, label_values
 from ..web import filtered, render
 
 router = APIRouter()
@@ -27,6 +28,11 @@ def home(request: Request):
 def weekly_review(request: Request, end: str = ''):
     with transaction(snapshot=True) as db:
         return render(request, 'review.html', report=build_weekly_review(db, end))
+
+@router.get('/voices')
+def voices(request: Request):
+    with transaction(snapshot=True) as db:
+        return render(request, 'voices.html', report=build_voice_report(db))
 
 @router.get('/compare')
 def comparison(request: Request, ids: str = '', selected: list[RecordId] = Query(default=[]),
@@ -75,11 +81,17 @@ def detail(request: Request, kind: str, id: RecordId):
         media=list(db.scalars(select(Media).where((Media.observation_id==id) if kind=='observation' else (Media.health_entry_id==id)).order_by(Media.id)))
         context={}
         if kind=='observation':
+            items = list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title)))
+            call_types = list(db.scalars(select(CallType).order_by(CallType.id)))
             context=dict(comments=list(db.scalars(select(Comment).where(Comment.observation_id==id).order_by(Comment.created_at))),
                 interactions=list(db.scalars(select(Interaction).where(Interaction.observation_id==id).order_by(Interaction.id))),
                 evidence=list(db.execute(select(Evidence,DictionaryItem).join(DictionaryItem).where(Evidence.observation_id==id))),
-                sound_results=list(db.execute(select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id).order_by(SoundAnalysis.created_at.desc()))),
-                items=list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title))))
+                sound_results=[(result, m, label_values(db, result)) for result, m in db.execute(
+                    select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id)
+                    .order_by(SoundAnalysis.start_ms, SoundAnalysis.created_at))],
+                items=items, call_types=call_types,
+                call_type_names={t.id: t.name for t in call_types},
+                item_titles={item.id: item.title for item in items})
         return render(request,'detail.html',kind=kind,row=row,media=media,
                       technical={m.id: technical_summary(m.technical_info) for m in media}, **context)
 

@@ -96,7 +96,11 @@ class SecurityMiddleware:
                 started = True
                 extra = [(b'x-content-type-options', b'nosniff'),
                     (b'content-security-policy', b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
-                    (b'referrer-policy', b'same-origin'), (b'cache-control', b'no-store')]
+                    (b'referrer-policy', b'same-origin'), (b'cache-control', b'no-store'),
+                    # 他のサイトが<img>や<video>でこのアプリの写真・動画・JSONを読み込むのを防ぐ。
+                    (b'cross-origin-resource-policy', b'same-origin'),
+                    (b'cross-origin-opener-policy', b'same-origin'),
+                    (b'permissions-policy', b'camera=(), microphone=(), geolocation=(), payment=(), usb=()')]
                 if set_cookie:
                     extra.append((b'set-cookie', f'{COOKIE}={set_cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200'.encode()))
                 msg['headers'] = list(msg.get('headers', [])) + extra

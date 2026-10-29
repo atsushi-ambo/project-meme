@@ -133,3 +133,49 @@ class AppendInput(Input):
 
 class MediaKeepInput(Input):
     keep: StrictBool
+
+
+def blank_none(value):
+    return None if value == '' else value
+
+
+class SoundLabelsInput(Input):
+    """声の区間に飼い主が付ける分類・行動・その後。どれも任意。"""
+    call_type_id: RecordId | None = None
+    call_count: int | None = Field(default=None, ge=1, le=100)
+    behaviors: list[str] = Field(default_factory=list, max_length=20)
+    meaning: str = Field(default='', max_length=40)
+    assessment: Literal['supports', 'contradicts', 'unknown'] = 'unknown'
+    owner_response: str = Field(default='', max_length=1000)
+    outcome: Literal['settled', 'repeated', 'stronger', 'left', 'unknown'] | None = None
+    observation: str = Field(default='', max_length=1000)
+    hypothesis: str = Field(default='', max_length=1000)
+    unknown: str = Field(default='', max_length=1000)
+    _blank = field_validator('call_type_id', 'call_count', 'outcome', mode='before')(blank_none)
+
+    @field_validator('behaviors')
+    @classmethod
+    def known_behaviors(cls, values):
+        from .services import BEHAVIORS
+        if any(value not in BEHAVIORS for value in values):
+            raise ValueError('行動の選択肢を確認してください。')
+        return list(dict.fromkeys(values))
+
+    @field_validator('owner_response', 'observation', 'hypothesis', 'unknown')
+    @classmethod
+    def no_nul(cls, value):
+        if '\x00' in value:
+            raise ValueError('使用できない文字が含まれています。')
+        return value
+
+
+class SoundCreateInput(SoundLabelsInput):
+    """ローカルCLIから区間を保存するときの入力。開始・終了は秒。"""
+    media_id: RecordId
+    start: str = Field(max_length=20)
+    end: str = Field(max_length=20)
+
+
+class CallTypeInput(Input):
+    name: str = Field(min_length=1, max_length=40, pattern=r'^[^\x00-\x1f]+$')
+    description: str = Field(default='', max_length=500)

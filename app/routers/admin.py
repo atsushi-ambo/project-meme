@@ -1,13 +1,11 @@
 """全データ出力と全削除。"""
 import anyio
-from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
-from starlette.background import BackgroundTask
 from ..config import settings
 from ..db import transaction
-from ..exports import export_zip
+from ..exports import ExportResponse, export_zip
 from ..models import Health, Media, Observation, now
 from ..web import read_form, safe_jobs
 
@@ -18,7 +16,7 @@ async def export(request:Request):
     raw=await read_form(request)
     if raw.get('confirm')!='出力': raise HTTPException(422,'「出力」と入力してください。')
     path=await anyio.to_thread.run_sync(export_zip)
-    return FileResponse(path,filename='project-meme-export.zip',background=BackgroundTask(Path(path).unlink,missing_ok=True))
+    return ExportResponse(path,filename='project-meme-export.zip')
 
 @router.post('/delete-all')
 async def delete_all(request:Request):

@@ -171,7 +171,37 @@ class SoundAnalysis(Base):
     observation = Column(Text, nullable=False, default='')
     hypothesis = Column(Text, nullable=False, default='')
     unknown = Column(Text, nullable=False, default='')
+    # 以下は飼い主が付ける分類と、その後の様子。意味は予想として扱う。
+    call_type_id = Column(ForeignKey('call_types.id', ondelete='SET NULL'), index=True)
+    call_count = Column(Integer)
+    owner_response = Column(Text, nullable=False, default='', server_default='')
+    outcome = Column(String(20))
+    dictionary_item_id = Column(ForeignKey('dictionary_items.id', ondelete='SET NULL'), index=True)
+    assessment = Column(String(20), nullable=False, default='unknown', server_default='unknown')
+    # 声の高さ・抑揚・長さの測定値（app.acoustics）。古い分析はNULL。
+    features = Column(JSONB(none_as_null=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at = Column(DateTime(timezone=True))
     __table_args__ = (CheckConstraint('start_ms >= 0 AND end_ms > start_ms AND end_ms - start_ms <= 10000', name='sound_analysis_interval'),
                       CheckConstraint('rms >= 0 AND rms <= 1 AND peak >= 0 AND peak <= 1', name='sound_analysis_levels'),
+                      CheckConstraint('call_count IS NULL OR call_count BETWEEN 1 AND 100', name='sound_analysis_call_count'),
+                      CheckConstraint("outcome IS NULL OR outcome IN ('settled','repeated','stronger','left','unknown')", name='sound_analysis_outcome'),
+                      CheckConstraint("assessment IN ('supports','contradicts','unknown')", name='sound_analysis_assessment'),
+                      CheckConstraint("features IS NULL OR jsonb_typeof(features) = 'object'", name='sound_analysis_features_object'),
                       UniqueConstraint('media_id', 'start_ms', 'end_ms', name='sound_analysis_unique_interval'))
+
+
+class CallType(Base):
+    """飼い主が聞き分けて名付ける鳴き声の種類。自動分類はしない。"""
+    __tablename__ = 'call_types'
+    id = Column(BigInteger, primary_key=True)
+    name = Column(String(40), nullable=False, unique=True)
+    description = Column(Text, nullable=False, default='')
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class SoundBehavior(Base):
+    """声の区間で見えた行動。値はservices.BEHAVIORSのキー。"""
+    __tablename__ = 'sound_behaviors'
+    sound_analysis_id = Column(ForeignKey('sound_analyses.id', ondelete='CASCADE'), primary_key=True)
+    behavior = Column(String(20), primary_key=True)

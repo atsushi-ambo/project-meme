@@ -11,7 +11,7 @@ from post import LocalClient
 
 
 def main():
-    if os.environ.get('MEME_TEST_MODE') != '1' or os.environ.get('MEDIA_ROOT') != '/tmp/meme-test-media':
+    if os.environ.get('MEME_TEST_MODE') != '1' or os.environ.get('MEDIA_ROOT') not in {'/media', '/tmp/meme-test-media'}:
         raise SystemExit('テスト専用環境以外では実行できません。')
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

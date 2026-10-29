@@ -44,6 +44,7 @@ def deliver(command, snapshot, destination, revision, previous, previous_db):
         # 検査の不合格・中断時は、この先のアプリ停止やDB操作へ進まない。
         print('6/9 アプリを止めてバックアップします。', flush=True)
         stopped = True
+        # 既存DB内でダンプする。新ネットワークへの再作成はバックアップ完了後だけ。
         snapshot(destination, restart=False,
                  runner=lambda args, **kw: command(['compose', *args], image=previous, **kw))
         record['stage'] = 'backed_up'

@@ -410,3 +410,26 @@ update.pyはテスト・Python依存監査・候補アプリのOS監査・更新
 - FFmpegは既存のffprobeと同じくアプリのコンテナ内で動かす。ネットワークを持たない別コンテナで動かすにはアプリからDockerを操作する権限が必要になり、Mac全体への権限に近く危険が大きいため採らない。代わりに`file,pipe`のみのプロトコル許可、形式の限定、20秒・出力320KB・2スレッドの上限、同時実行1件で抑える。FFmpegのOSパッケージは既存の週次コンテナ検査の対象。
 - 声の高さ・音色・類似度は、必要性と検証方法（実際の鳴き声で何を比べたいか）を決めてから追加する。Pythonの音声ライブラリを使う場合もDocker内に限る。
 
+
+## 鳴き声の種類・行動・その後と傾向（2026-10-28）
+
+目的の「どの声のとき、何を伝えているか」を確かめるため、声の区間（`sound_analyses`）を観察の単位にする。入力はすべて動画から。音声だけの添付は使わない運用だが、既存の音声添付も同じ処理で扱える。
+
+- `call_types`：飼い主が聞き分けて名付ける鳴き声の種類（名前は一意、40文字）。初回起動時に一般的な8種類（短い「ニャッ」、長い「ニャーオ」、「ンー」「ルルッ」、小さい声、「カカカ」、うなる・「シャー」、ゴロゴロ、まだ分からない）を作り、画面で追加・改名できる。自動分類はしない。
+- `sound_analyses`に追加：`call_type_id`（SET NULL）、`call_count`（1〜100、飼い主の数え）、`owner_response`（こちらがしたこと）、`outcome`（settled／repeated／stronger／left／unknown、NULLは未入力）、`dictionary_item_id`（辞書の予想、SET NULL）と`assessment`（supports／contradicts／unknown。予想がなければunknown）、`features`（JSONB）、`updated_at`。
+- `sound_behaviors`：区間ごとの見えた行動（`services.BEHAVIORS`の固定キー）。感情や意味ではなく見て分かる動きだけ。
+- `features`は`app/acoustics.py`（標準ライブラリのみ）が16kHzモノラルから測る。20msごとに正規化自己相関で200〜1600Hzの基本周波数を推定し（相関0.5未満・最大より約14dB小さいフレームは測らない、オクターブ誤りは最大の90%以上で最短の周期を選ぶ）、3点中央値で平滑化。中央値・10/90パーセンタイル・始め・終わり、有声時間、大きい音の時間、抑揚（有声部分を3等分し約半音差で上がる・下がる・山・谷・平ら）を保存する。区間で一番強い周期音なので人の声や物音も測りうる。
+- 区間選びの補助として`POST /api/observations/{id}/media/{mid}/loudness`が0.1秒ごとのRMSと周りより大きい音の候補（背景中央値の3倍かつ最大の25%以上が0.2秒以上）を返す。保存せず、GETでは解析しない。最初の3分まで。
+- 傾向は`build_voice_report`で、実記録（サンプル・削除中を除く）の最新5000区間を種類別・意味の予想別に集計する。件数・内訳・例だけを返し、確率や正解は作らない。区間5件未満または記録3件未満には少数の注意を付ける。
+- ローカルCLI用に`POST /api/observations/{id}/sounds`（新規、同じ区間は409）と`/sounds/{sid}/labels`（指定した項目だけ変更）を設ける。画面のフォームは全項目を送り置き換える。辞書項目を作りうるため、猫→観察→区間の順でロックする。
+- `prepare_analysis.py`の資料（format_version 2）に0.1秒ごとの音量、候補区間と特徴、候補の前後1秒の0.25秒間隔の静止画（最大120枚）、保存済みの区間と分類を含める。AIは候補ごとの見えた行動と時間を提案し、種類・意味・その後は飼い主の言葉だけを使い、確認後に保存する。
+
+## 権限の見直し（2026-10-28）
+
+参考資料（Webアプリケーションセキュリティ入門）の観点のうち、最小権限・多層防御・情報の読み取り防止を、DB・コンテナ・ファイル・ブラウザの各層で見直した。
+
+- DB：`a6d4e2f81c93`で`REVOKE ALL ON DATABASE ... FROM PUBLIC`、`REVOKE CREATE ON SCHEMA public FROM PUBLIC`、`meme_app`の`alembic_version`をSELECTのみにする。新規DBは`init-db.sh`でも同じにし、`meme_app`をNOSUPERUSER・NOCREATEDB・NOCREATEROLE・NOREPLICATION・NOBYPASSRLSで作る。テーブルのDELETEは全削除・期限処理で必要なため残す。所有者`meme_owner`は公式イメージの初期スーパーユーザーで、マイグレーション・バックアップだけに使う（分離は将来の課題）。
+- コンテナ：アプリ・マイグレーションは`read_only`＋`/tmp`のtmpfs。DBは`internal: true`のbackendネットワークだけ、webはbackendとポート公開用のfrontendに属する。テスト用のwebも読み取り専用で起動し、スモークテストで書き込み先の不足を検出する。
+- ファイル：アプリのumaskを077にし、メディア・エクスポート・一時ファイルを所有者だけが読めるようにする。setup.pyは保存先・下書き・分析資料のフォルダを700、`.env`を作成時から600にする。バックアップのファイルを600にする。
+- HTTP：`Cross-Origin-Resource-Policy: same-origin`（他サイトの`<img>`・`<video>`・`<script>`からの読み込みを拒否）、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`でカメラ・マイク等を無効化。既存のHost/Origin/CSRF/CSP/nosniffは維持。
+- 未対応・制限：同じOSユーザーのプロセスやDockerを操作できる人からは守れない。ディスク暗号化（FileVault）はOSの設定に任せる。参考資料のPDFは今回の作業環境から取得できず、リポジトリにまとめた方針を基準にした。
