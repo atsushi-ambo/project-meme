@@ -8,6 +8,7 @@ data/
 *.sqlite
 *.sqlite3
 *.db
+!Dockerfile.db
 .DS_Store
 
 # Local exports, backups and test artifacts

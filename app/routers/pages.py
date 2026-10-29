@@ -1,4 +1,5 @@
 """画面表示のGETルート。"""
+import re
 import uuid
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -7,10 +8,11 @@ from ..analysis import build_comparison, technical_summary
 from ..db import transaction
 from ..exports import health_csv
 from ..media import used_bytes
-from ..models import Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, Tag
+from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, SoundAnalysis, Tag
 from ..reviews import build_weekly_review
 from ..schemas import RecordId
 from ..services import LABELS, parent
+from ..voices import build_voice_report, label_values
 from ..web import filtered, render
 
 router = APIRouter()
@@ -26,6 +28,11 @@ def home(request: Request):
 def weekly_review(request: Request, end: str = ''):
     with transaction(snapshot=True) as db:
         return render(request, 'review.html', report=build_weekly_review(db, end))
+
+@router.get('/voices')
+def voices(request: Request):
+    with transaction(snapshot=True) as db:
+        return render(request, 'voices.html', report=build_voice_report(db))
 
 @router.get('/compare')
 def comparison(request: Request, ids: str = '', selected: list[RecordId] = Query(default=[]),
@@ -74,10 +81,17 @@ def detail(request: Request, kind: str, id: RecordId):
         media=list(db.scalars(select(Media).where((Media.observation_id==id) if kind=='observation' else (Media.health_entry_id==id)).order_by(Media.id)))
         context={}
         if kind=='observation':
+            items = list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title)))
+            call_types = list(db.scalars(select(CallType).order_by(CallType.id)))
             context=dict(comments=list(db.scalars(select(Comment).where(Comment.observation_id==id).order_by(Comment.created_at))),
                 interactions=list(db.scalars(select(Interaction).where(Interaction.observation_id==id).order_by(Interaction.id))),
                 evidence=list(db.execute(select(Evidence,DictionaryItem).join(DictionaryItem).where(Evidence.observation_id==id))),
-                items=list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title))))
+                sound_results=[(result, m, label_values(db, result)) for result, m in db.execute(
+                    select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id)
+                    .order_by(SoundAnalysis.start_ms, SoundAnalysis.created_at))],
+                items=items, call_types=call_types,
+                call_type_names={t.id: t.name for t in call_types},
+                item_titles={item.id: item.title for item in items})
         return render(request,'detail.html',kind=kind,row=row,media=media,
                       technical={m.id: technical_summary(m.technical_info) for m in media}, **context)
 
@@ -96,10 +110,22 @@ def dictionary_detail(request: Request, id:RecordId):
         return render(request,'dictionary.html',items=[],edit=item,evidence=evidence,uses=uses)
 
 @router.get('/storage')
-def storage(request: Request):
+def storage(request: Request, month: str = ''):
+    if month and not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month):
+        raise HTTPException(422, '月はYYYY-MM形式で指定してください。')
     with transaction() as db:
+        month_key = func.to_char(func.timezone('Asia/Tokyo',
+            func.coalesce(Media.captured_at, Media.retention_started_at)), 'YYYY-MM')
+        videos = (Media.status == 'ready', Media.mime_type.like('video/%'))
+        months = db.execute(select(month_key.label('month'), func.count(Media.id).label('count'),
+            func.coalesce(func.sum(Media.bytes), 0).label('bytes')).where(*videos)
+            .group_by(month_key).order_by(month_key.desc())).all()
+        query = select(Media).where(Media.status.not_in(['deleted']))
+        if month:
+            query = query.where(*videos, month_key == month)
         return render(request,'storage.html',cat=db.get(Cat,1),used=used_bytes(db),
-            media=list(db.scalars(select(Media).where(Media.status.not_in(['deleted'])).order_by(Media.expires_at.asc().nullsfirst()).limit(200))),
+            media=list(db.scalars(query.order_by(Media.expires_at.asc().nullsfirst()).limit(200))),
+            video_months=months, selected_month=month,
             deleting=sum(db.scalar(select(func.count()).select_from(model).where(model.deletion_requested_at.is_not(None))) for model in (Observation,Health)))
 
 @router.get('/health.csv')
@@ -115,4 +141,3 @@ def print_health(request:Request,start:str='',end:str=''):
         rows=filtered(db,Health,start=start,end=end,limit=1001)
         if len(rows)>1000: raise HTTPException(413,'期間を絞ってください。')
         return render(request,'print.html',rows=rows)
-

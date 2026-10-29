@@ -7,13 +7,83 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from ..db import transaction
 from ..media import request_delete
-from ..models import Cat, Comment, DictionaryItem, Evidence, Tag, now
-from ..schemas import (DictionaryInput, EvidenceInput, GuessesInput, HealthInput,
+from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Media, SoundAnalysis, Tag, now
+from ..sound_analysis import create as create_sound_analysis, remeasure, update_labels
+from ..schemas import (CallTypeInput, DictionaryInput, EvidenceInput, GuessesInput, HealthInput,
                        InteractionInput, JST, ObservationEditInput, ObservationInput, RecordId)
 from ..services import add_guesses, parent, save_dictionary, save_entry, save_evidence, save_interaction
 from ..web import id_validator, read_form, render, safe_jobs
 
 router = APIRouter()
+
+def sound_form_labels(raw):
+    # フォームに表示していた評価を、別の予想へ引き継がない。
+    if 'assessment_for' in raw and raw.pop('assessment_for') != raw.get('meaning', ''):
+        raw['assessment'] = 'unknown'
+    return raw
+
+
+@router.post('/observations/{id}/sound/{media_id}')
+async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
+    raw = sound_form_labels(await read_form(request))
+    def process():
+        with transaction() as db:
+            create_sound_analysis(db, id, media_id, raw)
+        return RedirectResponse(f'/entries/observation/{id}#sound-analysis', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/observations/{id}/sound-result/{result_id}/labels')
+async def sound_labels(request: Request, id: RecordId, result_id: RecordId):
+    raw = sound_form_labels(await read_form(request))
+    def process():
+        with transaction() as db:
+            update_labels(db, id, result_id, raw)
+        return RedirectResponse(f'/entries/observation/{id}#sound-{result_id}', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/observations/{id}/sound-result/{result_id}/measure')
+async def sound_remeasure(request: Request, id: RecordId, result_id: RecordId):
+    await read_form(request)
+    def process():
+        with transaction() as db:
+            remeasure(db, id, result_id)
+        return RedirectResponse(f'/entries/observation/{id}#sound-{result_id}', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/call-types/save')
+@router.post('/call-types/{id}/save')
+async def call_type_save(request: Request, id: RecordId | None = None):
+    raw = await read_form(request)
+    try:
+        data = CallTypeInput.model_validate(raw)
+    except ValidationError:
+        raise HTTPException(422, '鳴き声の種類の名前（40文字以内）と説明（500文字以内）を確認してください。')
+    def process():
+        with transaction() as db:
+            row = db.scalar(select(CallType).where(CallType.id == id).with_for_update()) if id else CallType()
+            if row is None:
+                raise HTTPException(404, '鳴き声の種類が見つかりません。')
+            duplicate = db.scalar(select(CallType.id).where(CallType.name == data.name, CallType.id != row.id)) \
+                if row.id else db.scalar(select(CallType.id).where(CallType.name == data.name))
+            if duplicate:
+                raise HTTPException(409, '同じ名前の鳴き声の種類があります。')
+            row.name, row.description = data.name, data.description
+            db.add(row)
+        return RedirectResponse('/voices#call-types', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/observations/{id}/sound-result/{result_id}/delete')
+async def sound_delete(request: Request, id: RecordId, result_id: RecordId):
+    await read_form(request)
+    def process():
+        with transaction() as db:
+            parent(db, 'observation', id, True)
+            result = db.scalar(select(SoundAnalysis).join(Media).where(
+                SoundAnalysis.id == result_id, Media.observation_id == id).with_for_update())
+            if not result: raise HTTPException(404)
+            db.delete(result)
+        return RedirectResponse(f'/entries/observation/{id}#sound-analysis', 303)
+    return await anyio.to_thread.run_sync(process)
 
 @router.post('/entries/{kind}/save')
 @router.post('/entries/{kind}/{id}/save')
@@ -127,4 +197,3 @@ async def profile(request:Request):
             cat=db.get(Cat,1,with_for_update=True); cat.name=name; cat.notes=notes; cat.birthday=birthday
         return RedirectResponse('/storage',303)
     return await anyio.to_thread.run_sync(process)
-

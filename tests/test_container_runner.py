@@ -268,6 +268,21 @@ def test_database_check_pulls_only_pinned_image_and_never_starts_database(scanne
     assert all(not path.exists() for path in paths)
 
 
+def test_database_check_builds_and_scans_patched_image(scanner, tmp_path, monkeypatch):
+    compose = compose_text('${DB_IMAGE:-project-meme-db:local}')
+    (tmp_path / 'compose.yaml').write_text(compose)
+    (tmp_path / 'Dockerfile.db').write_text('FROM ' + DATABASE_IMAGE + '\nRUN apt-get update\n')
+    monkeypatch.setitem(scanner['database_image'].__globals__, 'ROOT', tmp_path)
+    calls, paths = fake_docker(monkeypatch, scanner, database_reference=DATABASE_IMAGE)
+    assert scanner['check'](database=True) == 0
+    build = next(c for c in calls if c[:2] == ['docker', 'build'])
+    assert '--no-cache' in build and build[build.index('-f') + 1] == 'Dockerfile.db'
+    scanned = build[build.index('-t') + 1]
+    assert any(c[:3] == ['docker', 'image', 'save'] and c[-1] == scanned for c in calls)
+    assert not any(c[:2] == ['docker', 'pull'] and c[-1] == DATABASE_IMAGE for c in calls)
+    assert all(not path.exists() for path in paths)
+
+
 @pytest.mark.parametrize('case', ['missing', 'invalid', 'both'])
 def test_database_parse_errors_do_not_run_docker(scanner, tmp_path, monkeypatch, case):
     monkeypatch.setitem(scanner['database_image'].__globals__, 'ROOT', tmp_path)

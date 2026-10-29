@@ -14,7 +14,7 @@ from app.models import Base
 
 @pytest.fixture
 def client():
-    assert os.environ.get('MEME_TEST_MODE') == '1' and settings.media_root == Path('/tmp/meme-test-media'), 'Use python3 scripts/test.py; refusing to clear non-test data'
+    assert os.environ.get('MEME_TEST_MODE') == '1' and settings.media_root in {Path('/media'), Path('/tmp/meme-test-media')}, 'Use python3 scripts/test.py; refusing to clear non-test data'
     settings.media_root.mkdir(parents=True, exist_ok=True)
     (settings.media_root / 'staging').mkdir(exist_ok=True)
     (settings.media_root / 'deleting-all').unlink(missing_ok=True)

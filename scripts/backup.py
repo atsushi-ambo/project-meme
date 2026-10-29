@@ -26,13 +26,17 @@ def backup(destination, *, restart=True, runner=None):
     running = bool(run(['ps','--status','running','-q','web'],capture_output=True,text=True).stdout.strip())
     try:
         run(['stop','web'])
-        # 回復処理後のDBとファイルを一貫した組として取得する。
-        run(['run','--rm','--no-deps','web','python','-c','from app.media import run_jobs; run_jobs()'])
+        # 新しいComposeネットワークへ移す前のDBにも、既存コンテナ内から接続する。
+        # pending状態とstagingもそのまま保存し、復元後の通常の保守処理で回復する。
         with (destination/'database.dump').open('wb') as f:
             run(['exec','-T','db','pg_dump','-U','meme_owner','-d','meme','-Fc'],stdout=f)
         with tarfile.open(destination/'media.tar','w') as archive:
-            archive.add(media,arcname='media')
+            # 出力ZIPは一時的な複製なので、異常停止で残ったものもバックアップしない。
+            archive.add(media,arcname='media', filter=lambda item: None
+                        if item.name == 'media/.exports' or item.name.startswith('media/.exports/') else item)
         (destination/'manifest.json').write_text(json.dumps({'format_version':1,'created_at':datetime.now().isoformat(),'complete':True}))
+        for item in destination.iterdir():
+            item.chmod(0o600)
         print(f'バックアップ完了: {destination}')
     finally:
         if running and restart: run(['start','web'])

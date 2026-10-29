@@ -135,4 +135,3 @@ async def delete_profile_photo(request: Request):
             photo_path().unlink(missing_ok=True)
     await anyio.to_thread.run_sync(process)
     return RedirectResponse('/storage', 303)
-

@@ -9,8 +9,10 @@ from ..media import set_keep
 from ..models import Media
 from ..reviews import build_weekly_review
 from ..schemas import (AppendInput, GuessesInput, HealthInput, MediaKeepInput,
-                       ObservationInput, RecordId)
+                       ObservationInput, RecordId, SoundCreateInput)
 from ..services import add_guesses, append_observation, parent, save_entry
+from ..sound_analysis import create as create_sound, media_loudness, update_labels
+from ..voices import build_voice_report, sound_summary
 
 router = APIRouter()
 
@@ -18,6 +20,11 @@ router = APIRouter()
 def weekly_review_api(end: str = ''):
     with transaction(snapshot=True) as db:
         return build_weekly_review(db, end)
+
+@router.get('/api/analysis/voices')
+def voices_api():
+    with transaction(snapshot=True) as db:
+        return build_voice_report(db)
 
 @router.get('/api/analysis/observations')
 def comparison_api(ids: str = ''):
@@ -89,3 +96,46 @@ async def guesses_api(request: Request, id: RecordId):
         return {'status': 'saved', 'url': f'/entries/observation/{id}'}
     return await anyio.to_thread.run_sync(process)
 
+
+async def json_object(request):
+    try:
+        raw = await request.json()
+    except ValueError:
+        raise HTTPException(422, 'JSONを確認してください。')
+    if not isinstance(raw, dict):
+        raise HTTPException(422, 'JSONオブジェクトで指定してください。')
+    return raw
+
+@router.post('/api/observations/{id}/media/{media_id}/loudness')
+async def loudness_api(request: Request, id: RecordId, media_id: RecordId):
+    """区間選びの補助。POSTだけで解析し、結果は保存しない。"""
+    await json_object(request)
+    def process():
+        with transaction() as db:
+            return media_loudness(db, id, media_id)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/api/observations/{id}/sounds')
+async def sound_create_api(request: Request, id: RecordId):
+    """飼い主が確認した区間と分類をローカルCLIから保存する。同じ区間の再送は409。"""
+    raw = await json_object(request)
+    try:
+        data = SoundCreateInput.model_validate(raw)
+    except ValidationError:
+        raise HTTPException(422, '添付ID・開始・終了・分類の項目を確認してください。')
+    def process():
+        with transaction() as db:
+            result = create_sound(db, id, data.media_id, data.model_dump())
+            db.flush()
+            return sound_summary(db, result)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/api/observations/{id}/sounds/{result_id}/labels')
+async def sound_labels_api(request: Request, id: RecordId, result_id: RecordId):
+    raw = await json_object(request)
+    def process():
+        with transaction() as db:
+            result = update_labels(db, id, result_id, raw, merge=True)
+            db.flush()
+            return sound_summary(db, result)
+    return await anyio.to_thread.run_sync(process)

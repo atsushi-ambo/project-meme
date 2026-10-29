@@ -4,7 +4,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 WORKDIR /app
 COPY requirements.lock .
 RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
-RUN useradd -u 1000 -m meme
+RUN useradd -u 1000 -m meme && install -d -o meme -g meme -m 700 /media
 COPY . .
 USER meme
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]

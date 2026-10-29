@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -21,19 +22,21 @@ def updater(monkeypatch):
 
 
 @pytest.mark.parametrize('failure', [None, 'test', 'python_audit', 'build', 'os_audit',
-                                     'database_audit', 'backup', 'database_update',
-                                     'migrate', 'health', 'interrupt', 'database_interrupt'])
+                                     'database_build', 'database_audit', 'backup', 'database_update',
+                                     'collation', 'migrate', 'health', 'interrupt', 'database_interrupt'])
 def test_delivery_failure_boundaries(updater, tmp_path, failure):
     events = []
     dest = tmp_path / 'snapshot'
     def command(args, image=None, **kwargs):
         if args[0] == sys.executable:
             stage = {'test.py': 'test', 'security_check.py': 'python_audit',
-                     'container_check.py': 'database_audit' if args[-1] == '--database'
+                     'container_check.py': 'database_audit' if args[-1].startswith('project-meme-db:update-')
                      else 'os_audit'}[Path(args[1]).name]
+        elif args[:2] == ['docker', 'build']: stage = 'database_build'
         elif 'build' in args: stage = 'build'
         elif 'migrate' in args: stage = 'migrate'
         elif 'up' in args: stage = 'database_update' if args[-1] == 'db' else 'health'
+        elif 'exec' in args: stage = 'collation'
         elif 'start' in args: stage = 'restart'
         elif 'stop' in args: stage = 'stop'
         else: stage = 'tag'
@@ -43,15 +46,18 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
         if failure == 'database_interrupt' and stage == 'database_update': raise KeyboardInterrupt()
         if stage in ('build', 'database_update', 'migrate', 'health'):
             assert image.startswith('project-meme:update-')
+        if stage == 'build':
+            assert args == ['compose', 'build', 'web', '--no-cache']
         if stage == 'database_update':
             assert args == ['compose', 'up', '-d', '--no-deps', '--no-build', '--wait',
                             '--wait-timeout', '90', 'db']
             assert json.loads((dest / 'update.json').read_text())['stage'] == 'database_update_started'
+            assert kwargs['database'].startswith('project-meme-db:update-')
         if stage == 'os_audit':
             assert args[2] == '--image'
             assert args[3].startswith('project-meme:update-')
             assert image is None
-        return SimpleNamespace(stdout='container\n')
+        return SimpleNamespace(stdout='0\n' if stage == 'collation' else 'container\n')
     def snapshot(path, restart, runner):
         assert restart is False
         events.append('backup')
@@ -60,19 +66,19 @@ def test_delivery_failure_boundaries(updater, tmp_path, failure):
         (path / 'manifest.json').write_text('{"complete": true}')
     if failure:
         with pytest.raises((subprocess.CalledProcessError, OSError, KeyboardInterrupt)):
-            updater.deliver(command, snapshot, dest, 'revision', 'old-image')
+            updater.deliver(command, snapshot, dest, 'revision', 'old-image', 'old-db-image')
     else:
-        updater.deliver(command, snapshot, dest, 'revision', 'old-image')
-        assert events == ['test', 'python_audit', 'tag', 'build', 'os_audit',
-                          'database_audit', 'backup', 'database_update', 'migrate', 'health', 'tag']
+        updater.deliver(command, snapshot, dest, 'revision', 'old-image', 'old-db-image')
+        assert events == ['test', 'python_audit', 'tag', 'tag', 'build', 'os_audit', 'database_build',
+                          'database_audit', 'backup', 'database_update', 'collation', 'migrate', 'health', 'tag', 'tag']
         assert json.loads((dest / 'update.json').read_text())['stage'] == 'complete'
-    if failure in ('test', 'python_audit', 'build', 'os_audit', 'database_audit'):
+    if failure in ('test', 'python_audit', 'build', 'os_audit', 'database_build', 'database_audit'):
         assert not dest.exists()
         assert 'stop' not in events and 'restart' not in events
     if failure == 'backup':
         assert events[-1] == 'restart'
         assert 'migrate' not in events
-    if failure in ('database_update', 'database_interrupt'):
+    if failure in ('database_update', 'database_interrupt', 'collation'):
         assert events[-1] == 'stop' and 'restart' not in events and 'migrate' not in events
         assert json.loads((dest / 'update.json').read_text())['stage'] == 'failed_after_database_update_started'
         assert json.loads((dest / 'manifest.json').read_text())['complete']
@@ -90,18 +96,21 @@ def test_security_gate_preserves_existing_app_and_backup(updater, tmp_path, fail
     sentinel.write_text('{"previous_backup": true}')
     calls = []
     candidate = None
+    candidate_db = None
 
     def command(args, image=None, **kwargs):
-        nonlocal candidate
+        nonlocal candidate, candidate_db
         calls.append((args, image))
         if args[:3] == ['compose', 'build', 'web']:
             candidate = image
+        if args[:2] == ['docker', 'build']:
+            candidate_db = args[args.index('-t') + 1]
         if args[0] == sys.executable:
             script = Path(args[1]).name
             if script == 'container_check.py':
                 assert candidate is not None
-                if args[-1] == '--database':
-                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'), '--database']
+                if args[-1] == candidate_db:
+                    assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'), '--image', candidate_db]
                     stage = 'database_audit'
                 else:
                     assert args == [sys.executable, str(ROOT / 'scripts/container_check.py'),
@@ -117,7 +126,7 @@ def test_security_gate_preserves_existing_app_and_backup(updater, tmp_path, fail
         pytest.fail('検査に失敗した更新でバックアップを開始した')
 
     with pytest.raises(subprocess.CalledProcessError):
-        updater.deliver(command, snapshot, dest, 'revision', 'old-image')
+        updater.deliver(command, snapshot, dest, 'revision', 'old-image', 'old-db-image')
     assert sentinel.read_text() == '{"previous_backup": true}'
     assert sorted(path.name for path in dest.iterdir()) == ['update.json']
     assert not any(args[0] == 'compose' and args[1] != 'build' for args, _ in calls)
@@ -125,6 +134,21 @@ def test_security_gate_preserves_existing_app_and_backup(updater, tmp_path, fail
         assert [Path(args[1]).name for args, _ in calls] == ['test.py', 'security_check.py']
     else:
         assert candidate is not None
+
+
+def test_collation_mismatch_stops_before_migration(updater, tmp_path):
+    calls = []
+    dest = tmp_path / 'snapshot'
+    def command(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='1\n' if 'exec' in args else '')
+    def snapshot(path, **kwargs):
+        path.mkdir()
+    with pytest.raises(ValueError, match='照合順序'):
+        updater.deliver(command, snapshot, dest, 'revision', 'old-image', 'old-db-image')
+    assert not any('migrate' in args for args in calls)
+    assert calls[-1][:2] == ['compose', 'stop']
+    assert json.loads((dest / 'update.json').read_text())['stage'] == 'failed_after_database_update_started'
 
 
 @pytest.mark.parametrize('inside', ['media', 'repo'])
@@ -144,6 +168,8 @@ def test_backup_is_consistent_and_controls_restart(updater, tmp_path, monkeypatc
     media = tmp_path / 'media'
     media.mkdir()
     (media / 'test.txt').write_text('private test fixture')
+    (media / '.exports').mkdir()
+    (media / '.exports' / 'export-recent.zip').write_bytes(b'private export fixture')
     monkeypatch.setattr(backup, 'ROOT', tmp_path / 'repo')
     monkeypatch.setattr(backup, 'env_values', lambda: {'MEDIA_DIR': str(media)})
     calls = []
@@ -153,10 +179,51 @@ def test_backup_is_consistent_and_controls_restart(updater, tmp_path, monkeypatc
         return SimpleNamespace(stdout='running')
     dest = tmp_path / 'snapshot'
     backup.backup(dest, restart=restart, runner=runner)
-    assert calls == ['ps', 'stop', 'run', 'exec'] + (['start'] if restart else [])
+    assert calls == ['ps', 'stop', 'exec'] + (['start'] if restart else [])
     assert json.loads((dest / 'manifest.json').read_text())['complete']
     assert (dest / 'database.dump').read_bytes() == b'test dump'
+    with tarfile.open(dest / 'media.tar') as archive:
+        assert archive.getnames() == ['media', 'media/test.txt']
     assert dest.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize('dump_fails', [False, True])
+def test_update_backs_up_old_network_before_recreating_db(updater, tmp_path, monkeypatch, dump_fails):
+    """バックアップ中は既存DBへのexecだけを使い、新ネットワークのwebを起動しない。"""
+    media = tmp_path / 'media'
+    (media / 'staging').mkdir(parents=True)
+    (media / 'staging' / 'pending').write_bytes(b'pending fixture')
+    monkeypatch.setattr(updater.snapshots, 'ROOT', tmp_path / 'repo')
+    monkeypatch.setattr(updater.snapshots, 'env_values', lambda: {'MEDIA_DIR': str(media)})
+    dest = tmp_path / 'snapshot'
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        assert not ('run' in args and 'web' in args)
+        if 'pg_dump' in args:
+            assert args == ['compose', 'exec', '-T', 'db', 'pg_dump', '-U', 'meme_owner', '-d', 'meme', '-Fc']
+            assert calls[-2] == ['compose', 'stop', 'web']
+            assert not any('up' in call or 'migrate' in call for call in calls)
+            if dump_fails:
+                raise subprocess.CalledProcessError(1, args)
+            kwargs['stdout'].write(b'dump fixture')
+        if 'up' in args and args[-1] == 'db':
+            assert json.loads((dest / 'manifest.json').read_text())['complete']
+            assert (dest / 'database.dump').read_bytes() == b'dump fixture'
+            with tarfile.open(dest / 'media.tar') as archive:
+                assert archive.extractfile('media/staging/pending').read() == b'pending fixture'
+        return SimpleNamespace(stdout='running' if 'ps' in args else '0\n')
+
+    if dump_fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            updater.deliver(command, updater.snapshots.backup, dest, 'revision', 'old-image', 'old-db-image')
+        assert calls[-1] == ['compose', 'start', 'web']
+        assert not any('up' in call or 'migrate' in call for call in calls)
+        assert not (dest / 'manifest.json').exists()
+    else:
+        updater.deliver(command, updater.snapshots.backup, dest, 'revision', 'old-image', 'old-db-image')
+        assert json.loads((dest / 'update.json').read_text())['stage'] == 'complete'
 
 
 @pytest.mark.parametrize('state', ['dirty', 'stopped', 'ready'])

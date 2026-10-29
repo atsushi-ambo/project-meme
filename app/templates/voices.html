@@ -1,0 +1,45 @@
+{% extends 'base.html' %}{% from 'macros.html' import token %}
+{% macro counts(rows, empty='まだありません') %}{% for r in rows %}<span class="count-chip">{{ r.label }} <b>{{ r.count }}</b></span>{% else %}<span class="muted">{{ empty }}</span>{% endfor %}{% endmacro %}
+{% macro assessment_counts(c) %}<span class="count-chip">合っていそう <b>{{ c.supports }}</b></span><span class="count-chip">合わなそう <b>{{ c.contradicts }}</b></span><span class="count-chip">まだ分からない <b>{{ c.unknown }}</b></span>{% endmacro %}
+{% macro example(s) %}<li><a href="{{ s.observation_url }}">{{ s.occurred_at|isotime }}</a> · {{ s.start_seconds }}〜{{ s.end_seconds }}秒{% if s.call_type %} · {{ s.call_type.name }}{% endif %}{% if s.features and s.features.pitch_hz %} · 約{{ s.features.pitch_hz.median }}Hz・{{ contours.get(s.features.contour) }}{% endif %}{% if s.behaviors %} · {% for b in s.behaviors %}{{ b.label }}{{ '、' if not loop.last }}{% endfor %}{% endif %}{% if s.meaning %} · 予想「{{ s.meaning.title }}」{{ s.meaning.assessment_label }}{% endif %}{% if s.outcome %} · そのあと：{{ s.outcome.label }}{% endif %}{% if s.media_url %} · <a href="{{ s.media_url }}">区間を再生</a>{% endif %}{% if s.observation %}<br><span class="muted">{{ s.observation }}{% if s.observation_truncated %}…{% endif %}</span>{% endif %}</li>{% endmacro %}
+{% block content %}
+<div class="section-title"><div><p class="eyebrow">VOICES</p><h1>鳴き声の傾向</h1></div><a class="button secondary" href="/api/analysis/voices" download="meme-voices.json">資料を保存（JSON）</a></div>
+<p>記録の画面で区間を選んで付けた「鳴き声の種類・行動・その後・意味の予想」を集めて、どの声のときに何が起きていたかを両方向から見比べます。</p>
+<p class="muted">{{ report.scope_notice }}</p>
+<div class="card voice-totals"><span class="count-chip">声の区間 <b>{{ report.totals.segments }}</b></span><span class="count-chip">記録 <b>{{ report.totals.observations }}</b></span><span class="count-chip">種類あり <b>{{ report.totals.with_call_type }}</b></span><span class="count-chip">行動あり <b>{{ report.totals.with_behaviors }}</b></span><span class="count-chip">意味の予想あり <b>{{ report.totals.with_meaning }}</b></span><span class="count-chip">その後あり <b>{{ report.totals.with_outcome }}</b></span><span class="count-chip">声の高さあり <b>{{ report.totals.with_pitch }}</b></span>
+{% if report.totals.segments == 0 %}<p>まだ声の区間がありません。<a href="/observations">声・行動の記録</a>を開き、「声を記録して比べる」から動画の区間を選んでください。</p>{% endif %}</div>
+{% if report.totals.segments %}
+<details class="card" open><summary>次に記録するとよいこと</summary><ul>
+{% if report.totals.with_call_type < report.totals.segments %}<li>種類が未選択の区間が{{ report.totals.segments - report.totals.with_call_type }}件あります。聞き分けられたら種類を付けましょう。</li>{% endif %}
+{% if report.totals.with_outcome < report.totals.segments %}<li>「そのあと」が未入力の区間が{{ report.totals.segments - report.totals.with_outcome }}件あります。こちらの対応で鳴きやんだかどうかが、意味を確かめる一番の手がかりになります。</li>{% endif %}
+{% if report.totals.with_pitch < report.totals.segments %}<li>声の高さを測っていない区間があります。記録の画面の「声の高さ・抑揚・長さも測る」で追加できます。</li>{% endif %}
+<li>同じ種類の声で予想と合わない例（「合わなそう」）も残すと、思い込みに気づけます。</li>
+<li>意味を確かめるには、同じ声のときに予想した対応をして、鳴きやむか・満足そうかを見ます。毎回は試さず、メメの負担にならない範囲で。</li></ul></details>
+<h2 id="by-type">鳴き声の種類から見る</h2>
+<div class="voice-grid">{% for g in report.call_types %}<article class="card"><h3>{{ g.name }}</h3>{% if g.description %}<p class="muted">{{ g.description }}</p>{% endif %}
+<p>区間 {{ g.segments }}件 · 記録 {{ g.observations }}件</p>{% if g.few_examples_notice %}<p class="warning">{{ g.few_examples_notice }}</p>{% endif %}
+<dl class="voice-facts">
+<dt>声の高さ</dt><dd>{% if g.acoustics.pitch_hz %}{% if g.acoustics.measured_segments > 1 %}区間ごとの中央値 {{ g.acoustics.pitch_hz.min }}〜{{ g.acoustics.pitch_hz.max }}Hz（中央 約{{ g.acoustics.pitch_hz.median }}Hz、{{ g.acoustics.measured_segments }}件）{% else %}約{{ g.acoustics.pitch_hz.median }}Hz（1件）{% endif %}{% else %}<span class="muted">未測定</span>{% endif %}</dd>
+<dt>抑揚</dt><dd>{{ counts(g.acoustics.contours, '未測定') }}</dd>
+<dt>声の長さ</dt><dd>{% if g.acoustics.voiced_ms %}約{{ '%.1f'|format(g.acoustics.voiced_ms.min / 1000) }}{% if g.acoustics.voiced_ms.max != g.acoustics.voiced_ms.min %}〜{{ '%.1f'|format(g.acoustics.voiced_ms.max / 1000) }}{% endif %}秒{% else %}<span class="muted">未測定</span>{% endif %}</dd>
+<dt>行動</dt><dd>{{ counts(g.behaviors) }}</dd>
+<dt>状況</dt><dd>{{ counts(g.tags, 'タグなし') }}</dd>
+<dt>場所</dt><dd>{{ counts(g.locations) }}</dd>
+<dt>そのあと</dt><dd>{{ counts(g.outcomes) }}</dd>
+<dt>意味の予想</dt><dd>{% for m in g.meanings %}<div><a href="{{ m.url }}">{{ m.title }}</a> {{ assessment_counts(m.counts) }}</div>{% endfor %}{% if g.without_meaning %}<div class="muted">予想なし {{ g.without_meaning }}件</div>{% endif %}</dd>
+</dl><details><summary>例（新しい順に最大10件）</summary><ul class="voice-examples">{% for s in g.examples %}{{ example(s) }}{% endfor %}</ul></details></article>{% endfor %}</div>
+<h2 id="by-meaning">意味の予想から見る</h2>
+{% if report.meanings %}<div class="voice-grid">{% for g in report.meanings %}<article class="card"><h3><a href="{{ g.url }}">{{ g.title }}</a></h3>
+<p>区間 {{ g.segments }}件 · 記録 {{ g.observations }}件</p>{% if g.few_examples_notice %}<p class="warning">{{ g.few_examples_notice }}</p>{% endif %}
+<dl class="voice-facts"><dt>鳴き声の種類</dt><dd>{% for c in g.call_types %}<div>{{ c.name }}（{{ c.count }}件）{{ assessment_counts(c.counts) }}</div>{% endfor %}</dd>
+<dt>行動</dt><dd>{{ counts(g.behaviors) }}</dd><dt>状況</dt><dd>{{ counts(g.tags, 'タグなし') }}</dd><dt>そのあと</dt><dd>{{ counts(g.outcomes) }}</dd>
+<dt>声の高さ</dt><dd>{% if g.acoustics.pitch_hz %}{{ g.acoustics.pitch_hz.min }}{% if g.acoustics.pitch_hz.max != g.acoustics.pitch_hz.min %}〜{{ g.acoustics.pitch_hz.max }}{% endif %}Hz{% else %}<span class="muted">未測定</span>{% endif %}</dd></dl>
+<details><summary>例（新しい順に最大10件）</summary><ul class="voice-examples">{% for s in g.examples %}{{ example(s) }}{% endfor %}</ul></details></article>{% endfor %}</div>
+{% else %}<p class="muted">意味の予想を付けた区間はまだありません。</p>{% endif %}
+{% if report.omitted.segments or report.omitted.beyond_limit %}<p class="muted">一覧は新しい{{ report.segments|length }}件までです。{% if report.omitted.beyond_limit %}集計も最新{{ report.totals.segments }}件までです。{% endif %}</p>{% endif %}
+{% endif %}
+<section class="card" id="call-types"><h2>鳴き声の種類</h2><p>聞き分けた声に、自分で分かる名前を付けます。名前を変えると、保存済みの区間の表示も変わります。</p>
+{% for t in report.choices.call_types %}<details><summary>{{ t.name }}</summary><form method="post" action="/call-types/{{ t.id }}/save">{{ token(csrf) }}<label>名前<input name="name" value="{{ t.name }}" maxlength="40" required></label><label>どんな声か<textarea name="description" maxlength="500">{{ t.description }}</textarea></label><button class="secondary">保存</button></form></details>{% endfor %}
+<form method="post" action="/call-types/save">{{ token(csrf) }}<label>新しい種類の名前<input name="name" maxlength="40" required placeholder="例：朝の「ニャニャッ」"></label><label>どんな声か（任意）<textarea name="description" maxlength="500" placeholder="例：短く2回、語尾が上がる"></textarea></label><button>種類を追加</button></form></section>
+<details class="card"><summary>この資料をAIなどで使うとき</summary><p>{{ report.scope_notice }}</p><p>{{ report.data_notice }}</p><p>JSONは自分のMacに保存できます。アプリから外部サービスへの自動送信はありません。</p></details>
+{% endblock %}
