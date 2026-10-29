@@ -43,13 +43,19 @@ class HealthInput(Input):
     appetite: Literal['usual','less','none','more'] | None = None
     energy: Literal['usual','less','very_low','more'] | None = None
     details: str = Field(default='', max_length=10000)
+    food_amount: str | None = Field(default=None, max_length=120)
+    stool_condition: str | None = Field(default=None, max_length=500)
+    time_is_approximate: bool | None = None
     submission_key: UUID
     _time = field_validator('occurred_at', mode='before')(parse_time)
 
-    @field_validator('count','weight_value','weight_unit','meal_interval_minutes','appetite','energy', mode='before')
+    @field_validator('count','weight_value','weight_unit','meal_interval_minutes','appetite','energy','food_amount','stool_condition','time_is_approximate', mode='before')
     @classmethod
     def empty(cls, value):
-        return None if value == '' else value
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
     @model_validator(mode='after')
     def combinations(self):
@@ -60,6 +66,10 @@ class HealthInput(Input):
             raise ValueError('体重以外の記録では体重と単位を空欄にしてください。')
         if self.event_type != 'vomit' and (self.count is not None or self.meal_interval_minutes is not None):
             raise ValueError('回数と食事との間隔は嘔吐の記録で入力してください。')
+        if self.event_type != 'food' and self.food_amount is not None:
+            raise ValueError('食べた量は食事の記録で入力してください。')
+        if self.event_type != 'toilet' and self.stool_condition is not None:
+            raise ValueError('便の様子はトイレの記録で入力してください。')
         return self
 
 class DictionaryInput(Input):

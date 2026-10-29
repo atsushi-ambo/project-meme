@@ -61,10 +61,11 @@ def csv_cell(value):
 def health_csv(rows, labels):
     output = io.StringIO(newline='')
     writer = csv.writer(output)
-    writer.writerow(['日時（日本時間）','種類','回数','体重','単位','食事からの分数','食欲','元気さ','メモ'])
+    writer.writerow(['日時（日本時間）','種類','回数','体重','単位','食事からの分数','食欲','元気さ','メモ','日時の精度','食べた量','便の様子'])
     from .schemas import JST
     for row in rows:
-        writer.writerow([csv_cell(v) for v in [row.occurred_at.astimezone(JST).isoformat(), labels[row.event_type], row.count, row.weight_value, row.weight_unit, row.meal_interval_minutes, row.appetite, row.energy, row.details]])
+        precision = 'およそ' if row.time_is_approximate is True else '入力した時刻' if row.time_is_approximate is False else '不明'
+        writer.writerow([csv_cell(v) for v in [row.occurred_at.astimezone(JST).isoformat(), labels[row.event_type], row.count, row.weight_value, row.weight_unit, row.meal_interval_minutes, row.appetite, row.energy, row.details, precision, row.food_amount, row.stool_condition]])
     return '\ufeff' + output.getvalue()
 
 def json_default(value):

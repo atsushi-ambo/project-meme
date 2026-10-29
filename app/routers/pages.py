@@ -71,6 +71,10 @@ def entry_form(request: Request, kind: str, id: RecordId | None=None):
         from ..models import ObservationTag
         selected = list(db.scalars(select(ObservationTag.tag_id).where(ObservationTag.observation_id==id))) if row and kind=='observation' else []
         values = {c.name:getattr(row,c.name) for c in row.__table__.columns} if row else {}
+        if not row and kind == 'health':
+            selected_type = request.query_params.get('event_type')
+            if selected_type in LABELS:
+                values['event_type'] = selected_type
         values.update(tags=selected, submission_key=str(uuid.uuid4()))
         if row and kind == 'observation': values['expected_revision'] = row.revision
         return render(request,'form.html',kind=kind,id=id,values=values,errors=[],tags=list(db.scalars(select(Tag))))
