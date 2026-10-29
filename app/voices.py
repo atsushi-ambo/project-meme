@@ -14,6 +14,7 @@ from .models import (CallType, DictionaryItem, Media, Observation, ObservationTa
                      SoundBehavior, Tag, now)
 from .acoustics import CONTOURS
 from .services import ASSESSMENTS, BEHAVIORS, OUTCOMES
+from .voice_match import has_shape, type_shapes, voice_map
 
 SEGMENT_LIMIT = 5000
 LIST_LIMIT = 200
@@ -210,6 +211,9 @@ def build_voice_report(db):
     meaning_groups = sorted(({'id': id, 'title': rows_[0]['meaning']['title'], 'url': rows_[0]['meaning']['url'],
                               **group(rows_, 'meaning')} for id, rows_ in by_meaning.items()),
                             key=lambda g: (-g['segments'], g['id']))
+    shapes = type_shapes(rows)
+    for group_ in type_groups:
+        group_['shape_lines'] = shapes.get(group_['id'], [])
     listed = rows[:LIST_LIMIT]
     return {
         'format_version': 1, 'timezone': 'Asia/Tokyo',
@@ -220,7 +224,9 @@ def build_voice_report(db):
                    'with_outcome': sum(1 for row in rows if row['outcome']),
                    'with_behaviors': sum(1 for row in rows if row['behaviors']),
                    'with_pitch': sum(1 for row in rows if isinstance(row['features'], dict)
-                                     and row['features'].get('pitch_hz'))},
+                                     and row['features'].get('pitch_hz')),
+                   'with_shape': sum(1 for row in rows if has_shape(row['features']))},
+        'voice_map': voice_map(rows),
         'call_types': type_groups, 'meanings': meaning_groups,
         'choices': {'call_types': [{'id': row.id, 'name': row.name, 'description': row.description}
                                    for row in call_types.values()],

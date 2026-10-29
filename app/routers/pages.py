@@ -12,6 +12,7 @@ from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Health, I
 from ..reviews import build_weekly_review
 from ..schemas import RecordId
 from ..services import LABELS, parent
+from ..voice_match import matches_for
 from ..voices import build_voice_report, label_values
 from ..web import filtered, render
 
@@ -83,12 +84,14 @@ def detail(request: Request, kind: str, id: RecordId):
         if kind=='observation':
             items = list(db.scalars(select(DictionaryItem).order_by(DictionaryItem.title)))
             call_types = list(db.scalars(select(CallType).order_by(CallType.id)))
+            sound_results = [(result, m, label_values(db, result)) for result, m in db.execute(
+                select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id)
+                .order_by(SoundAnalysis.start_ms, SoundAnalysis.created_at))]
             context=dict(comments=list(db.scalars(select(Comment).where(Comment.observation_id==id).order_by(Comment.created_at))),
                 interactions=list(db.scalars(select(Interaction).where(Interaction.observation_id==id).order_by(Interaction.id))),
                 evidence=list(db.execute(select(Evidence,DictionaryItem).join(DictionaryItem).where(Evidence.observation_id==id))),
-                sound_results=[(result, m, label_values(db, result)) for result, m in db.execute(
-                    select(SoundAnalysis, Media).join(Media).where(Media.observation_id==id)
-                    .order_by(SoundAnalysis.start_ms, SoundAnalysis.created_at))],
+                sound_results=sound_results,
+                matches=matches_for(db, [result for result, _, _ in sound_results]) if not row.is_sample else {},
                 items=items, call_types=call_types,
                 call_type_names={t.id: t.name for t in call_types},
                 item_titles={item.id: item.title for item in items})

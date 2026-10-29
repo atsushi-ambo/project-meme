@@ -19,6 +19,7 @@ MAX_HZ = 1600
 VOICED = 0.5         # 正規化した自己相関がこれ未満のフレームは高さ不明とする。
 SILENCE = 0.003      # これより小さいRMSは無音扱い。
 STEP = RATE // 10    # 音量の推移は0.1秒ごと。
+SHAPE_POINTS = 32   # 声のかたち（高さの動き）を比べるための点の数。
 CONTOURS = {'rising': '上がる', 'falling': '下がる', 'arch': '上がって下がる',
             'valley': '下がって上がる', 'flat': 'ほぼ平ら', 'unknown': '判定できない'}
 
@@ -121,7 +122,7 @@ def features(values):
     """区間全体の特徴。値はJSONにそのまま保存できる型だけにする。"""
     track = pitch_track(values)
     if not track:
-        return {'version': 1, 'voiced_ms': 0, 'sound_ms': 0, 'pitch_hz': None, 'contour': 'unknown'}
+        return {'version': 2, 'voiced_ms': 0, 'sound_ms': 0, 'pitch_hz': None, 'contour': 'unknown', 'shape_st': None}
     loudest = max(level for _, _, level in track)
     floor = max(SILENCE, loudest * 0.2)
     sound_frames = sum(level >= floor for _, _, level in track)
@@ -133,9 +134,73 @@ def features(values):
         high = ordered[int(0.9 * (len(ordered) - 1))]
         pitch = {'median': round(statistics.median(pitches)), 'low': round(low), 'high': round(high),
                  'start': round(statistics.median(pitches[:3])), 'end': round(statistics.median(pitches[-3:]))}
-    return {'version': 1, 'voiced_ms': len(pitches) * HOP * 1000 // RATE,
+    return {'version': 2, 'voiced_ms': len(pitches) * HOP * 1000 // RATE,
             'sound_ms': sound_frames * HOP * 1000 // RATE,
-            'pitch_hz': pitch, 'contour': contour(pitches)}
+            'pitch_hz': pitch, 'contour': contour(pitches),
+            'shape_st': [round(semitones(hz), 2) for hz in resample(pitches, SHAPE_POINTS)] if len(pitches) >= 3 else None}
+
+
+def semitones(hz):
+    """440Hzを0とした半音の数。人の耳と同じく、高さの比を差として扱う。"""
+    return 12 * math.log2(hz / 440)
+
+
+def resample(values, count):
+    """長さの違う高さの並びを、線形補間で同じ点数にそろえる。"""
+    if len(values) == 1:
+        return [values[0]] * count
+    out = []
+    for i in range(count):
+        position = i * (len(values) - 1) / (count - 1)
+        left = int(position)
+        right = min(left + 1, len(values) - 1)
+        out.append(values[left] + (values[right] - values[left]) * (position - left))
+    return out
+
+
+def dtw(a, b, band=6):
+    """動的時間伸縮。少し早い・遅い抑揚のずれを許して、形の違いの平均（半音）を返す。"""
+    inf = float('inf')
+    n, m = len(a), len(b)
+    cost = [[inf] * (m + 1) for _ in range(n + 1)]
+    steps = [[0] * (m + 1) for _ in range(n + 1)]
+    cost[0][0] = 0.0
+    for i in range(1, n + 1):
+        for j in range(max(1, i - band), min(m, i + band) + 1):
+            previous = min((cost[i - 1][j - 1], steps[i - 1][j - 1]), (cost[i - 1][j], steps[i - 1][j]),
+                           (cost[i][j - 1], steps[i][j - 1]))
+            cost[i][j] = previous[0] + abs(a[i - 1] - b[j - 1])
+            steps[i][j] = previous[1] + 1
+    return cost[n][m] / steps[n][m]
+
+
+def voice_distance(a, b):
+    """二つの区間の声の違い。小さいほど似ている。測れないときはNone。
+
+    抑揚の形（高さの動き、半音）、声の高さの差（半音）、長さの比をまとめる。
+    同じ猫の同じ種類の声でも状況で変わるため、意味が同じことの根拠にはならない。
+    """
+    if not all(isinstance(f, dict) and isinstance(f.get('shape_st'), list) and len(f['shape_st']) == SHAPE_POINTS
+               for f in (a, b)):
+        return None
+    shape_a, shape_b = a['shape_st'], b['shape_st']
+    center_a, center_b = statistics.median(shape_a), statistics.median(shape_b)
+    shape = dtw([v - center_a for v in shape_a], [v - center_b for v in shape_b])
+    level = abs(center_a - center_b)
+    length = abs(math.log2(max(a.get('voiced_ms') or 0, 20) / max(b.get('voiced_ms') or 0, 20)))
+    return {'distance': round(shape + 0.5 * level + 2 * length, 2), 'shape_st': round(shape, 2),
+            'level_st': round(level, 2), 'length_ratio': round(2 ** length, 2)}
+
+
+def closeness(distance):
+    """距離の目安を言葉にする。実際の鳴き声で確かめるまでの仮の区切り。"""
+    if distance < 1.5:
+        return 'とても近い'
+    if distance < 3:
+        return '近い'
+    if distance < 5:
+        return 'やや近い'
+    return '離れている'
 
 
 def loudness(values):
