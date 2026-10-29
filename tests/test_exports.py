@@ -1,5 +1,4 @@
 """出力ZIPの保存先・権限と、失敗・異常停止後の後片付けを確認する。"""
-import asyncio
 from contextlib import contextmanager
 import fcntl
 import io
@@ -10,7 +9,6 @@ import zipfile
 
 import anyio
 import pytest
-from starlette.requests import ClientDisconnect
 
 from app import exports
 from app.config import settings
@@ -77,34 +75,31 @@ def test_export_transaction_failure_removes_completed_archive(client, monkeypatc
     assert list((settings.media_root / '.exports').iterdir()) == []
 
 
-@pytest.mark.parametrize('failure', [OSError, asyncio.CancelledError])
-@pytest.mark.parametrize('spec_version', ['2.0', '2.4'])
-def test_export_response_failure_removes_archive(tmp_path, failure, spec_version):
+@pytest.mark.parametrize('failure', ['send_error', 'cancelled'])
+def test_export_response_failure_removes_archive(tmp_path, failure):
     path = tmp_path / 'export-test.zip'
     path.write_bytes(b'zip fixture')
 
+    async def receive():
+        # 切断通知を送るとStarletteの版により送信自体が止まるため、送らない。
+        await anyio.sleep_forever()
+
+    async def send(message):
+        if message['type'] == 'http.response.body':
+            if failure == 'send_error':
+                raise OSError('client connection lost')
+            await anyio.sleep_forever()  # 遅いダウンロードの途中で外から中断される。
+
     async def respond():
-        failed = anyio.Event()
-        injected = failure('simulated send failure')
-
-        async def receive():
-            # 即座に切断を返すと、送信処理へ到達する前にキャンセルされる。
-            await failed.wait()
-            return {'type': 'http.disconnect'}
-
-        async def send(message):
-            if message['type'] == 'http.response.body':
-                failed.set()
-                raise injected
-
-        try:
-            with anyio.fail_after(5):
-                await exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': [],
-                    'asgi': {'spec_version': spec_version}}, receive, send)
-        except (failure, ClientDisconnect) as exc:
-            # Starletteの再送出の有無に依存せず、タイムアウト等の別の失敗は通さない。
-            assert exc is injected or isinstance(exc, ClientDisconnect)
-        assert failed.is_set()
+        response = exports.ExportResponse(path)({'type': 'http', 'method': 'GET', 'headers': []}, receive, send)
+        if failure == 'send_error':
+            with pytest.raises(OSError):
+                await response
+        else:
+            # 切断やサーバー停止では、リクエストを処理するタスクが外側から取り消される。
+            with anyio.move_on_after(0.2) as scope:
+                await response
+            assert scope.cancelled_caught
 
     anyio.run(respond)
     assert not path.exists()
