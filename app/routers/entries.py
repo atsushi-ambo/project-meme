@@ -16,9 +16,16 @@ from ..web import id_validator, read_form, render, safe_jobs
 
 router = APIRouter()
 
+def sound_form_labels(raw):
+    # フォームに表示していた評価を、別の予想へ引き継がない。
+    if 'assessment_for' in raw and raw.pop('assessment_for') != raw.get('meaning', ''):
+        raw['assessment'] = 'unknown'
+    return raw
+
+
 @router.post('/observations/{id}/sound/{media_id}')
 async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
-    raw = await read_form(request)
+    raw = sound_form_labels(await read_form(request))
     def process():
         with transaction() as db:
             create_sound_analysis(db, id, media_id, raw)
@@ -27,7 +34,7 @@ async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
 
 @router.post('/observations/{id}/sound-result/{result_id}/labels')
 async def sound_labels(request: Request, id: RecordId, result_id: RecordId):
-    raw = await read_form(request)
+    raw = sound_form_labels(await read_form(request))
     def process():
         with transaction() as db:
             update_labels(db, id, result_id, raw)

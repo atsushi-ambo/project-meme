@@ -259,3 +259,44 @@ def test_noise_and_silence_have_no_pitch():
     noisy = acoustics.features([random.gauss(0, 0.2) for _ in range(16000)])
     assert noisy['voiced_ms'] < 200
     assert acoustics.loud_spans([]) == [] and acoustics.features([])['contour'] == 'unknown'
+
+
+@pytest.mark.parametrize('assessment', ['supports', 'contradicts'])
+@pytest.mark.parametrize('change', ['changed', 'unchanged', 'reselected', 'clear'])
+def test_form_meaning_assessment_binding(client, meow_video, assessment, change):
+    oid, mid = saved(client, meow_video)
+    created = api(client, f'/api/observations/{oid}/sounds', {
+        'media_id': mid, 'start': '0.5', 'end': '1.1',
+        'meaning': 'preset:food', 'assessment': assessment})
+    assert created.status_code == 200, created.text
+    body = created.json()
+    old_meaning = f'item:{body["meaning"]["id"]}'
+    page = client.get(f'/entries/observation/{oid}').text
+    assert f'name="assessment_for" value="{old_meaning}"' in page
+    assert 'name="assessment_for" value=""' in page
+    meaning = old_meaning if change == 'unchanged' else '' if change == 'clear' else 'preset:play'
+    response = post(client, f'/observations/{oid}/sound-result/{body["id"]}/labels', {
+        'meaning': meaning, 'assessment': assessment,
+        'assessment_for': meaning if change == 'reselected' else old_meaning})
+    assert response.status_code == 303, response.text
+    with transaction() as db:
+        result = db.get(SoundAnalysis, body['id'])
+        assert result.assessment == ('unknown' if change in {'changed', 'clear'} else assessment)
+        if change == 'clear':
+            assert result.dictionary_item_id is None
+        else:
+            assert (result.dictionary_item_id == body['meaning']['id']) == (change == 'unchanged')
+
+
+@pytest.mark.parametrize('assessment_for,expected', [
+    ('', 'unknown'), ('preset:food', 'unknown'), ('preset:play', 'supports')])
+def test_create_form_meaning_assessment_binding(client, meow_video, assessment_for, expected):
+    oid, mid = saved(client, meow_video)
+    response = post(client, f'/observations/{oid}/sound/{mid}', {
+        'start': '0.5', 'end': '1.1', 'meaning': 'preset:play',
+        'assessment': 'supports', 'assessment_for': assessment_for})
+    assert response.status_code == 303, response.text
+    with transaction() as db:
+        result = db.scalar(select(SoundAnalysis).where(SoundAnalysis.media_id == mid))
+        assert result.assessment == expected
+        assert db.get(DictionaryItem, result.dictionary_item_id).title == '遊びたい'

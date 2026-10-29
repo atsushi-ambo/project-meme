@@ -257,3 +257,14 @@ for (const picker of document.querySelectorAll('.sound-picker')) {
   });
   for (const input of [start, end]) input.addEventListener('input', draw);
 }
+
+// 意味を選び直したら、評価もその予想について選び直す。
+for (const marker of document.querySelectorAll('input[name="assessment_for"]')) {
+  const form = marker.form;
+  const meaning = form.querySelector('select[name="meaning"]');
+  const assessment = form.querySelector('select[name="assessment"]');
+  meaning.addEventListener('change', () => {
+    assessment.value = 'unknown';
+    marker.value = meaning.value;
+  });
+}

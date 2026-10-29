@@ -19,6 +19,7 @@
 <label>この区間で鳴いた回数（任意）<input type="number" name="call_count" min="1" max="100" value="{{ values.call_count if values.call_count is not none else '' }}"></label>
 <fieldset><legend>そのときの行動（複数可）</legend><div class="tags guess-options">{% for key, label in behaviors.items() %}<label><input type="checkbox" name="behaviors" value="{{ key }}" {% if key in values.behaviors %}checked{% endif %}>{{ label }}</label>{% endfor %}</div></fieldset>
 <label>意味の予想<select name="meaning"><option value="">まだ選ばない</option>{% for item in items if item.kind=='hypothesis' %}<option value="item:{{ item.id }}" {% if values.meaning=='item:' ~ item.id %}selected{% endif %}>{{ item.title }}</option>{% endfor %}{% set titles = items|selectattr('kind', 'equalto', 'hypothesis')|map(attribute='title')|list %}{% for key, title in guess_presets.items() if title not in titles %}<option value="preset:{{ key }}">{{ title }}</option>{% endfor %}</select></label>
+<input type="hidden" name="assessment_for" value="{{ values.meaning|default('') }}">
 <label>その予想とこの区間の関係<select name="assessment">{% for key, label in assessments.items() %}<option value="{{ key }}" {% if values.assessment==key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
 <p class="muted">例：ごはんを出したら鳴きやんだ →「ごはんがほしい」に合っていそう。分からないときは「まだ分からない」のままにします。</p>
 <label>こちらがしたこと（任意）<textarea name="owner_response" maxlength="1000" placeholder="例：声をかけた／ドアを開けた／何もしなかった">{{ values.owner_response }}</textarea></label>
