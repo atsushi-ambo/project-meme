@@ -160,6 +160,28 @@ def test_call_types_can_be_added_and_renamed(client):
     assert '朝の二声' in client.get('/voices').text
 
 
+def test_delete_all_removes_custom_call_types_and_restores_defaults(client):
+    from app.services import CALL_TYPE_PRESETS
+    assert post(client, '/call-types/save', {'name': '架空の専用名', 'description': '架空の私用説明'}).status_code == 303
+    first = call_type_id(CALL_TYPE_PRESETS[0][0])
+    second = call_type_id(CALL_TYPE_PRESETS[1][0])
+    assert post(client, f'/call-types/{first}/save', {'name': '架空の変更名', 'description': '架空の変更説明'}).status_code == 303
+    assert post(client, f'/call-types/{second}/save', {'name': CALL_TYPE_PRESETS[1][0], 'description': '架空の追記説明'}).status_code == 303
+    private = ('架空の専用名', '架空の私用説明', '架空の変更名', '架空の変更説明', '架空の追記説明')
+    for url in ('/voices', '/api/analysis/voices'):
+        before = client.get(url).text
+        assert all(value in before for value in private)
+    assert post(client, '/delete-all', {'confirm': 'メメの全記録を削除'}).status_code == 303
+    with transaction() as db:
+        assert list(db.execute(select(CallType.name, CallType.description).order_by(CallType.id))) == CALL_TYPE_PRESETS
+    for url in ('/voices', '/api/analysis/voices'):
+        response = client.get(url)
+        assert response.status_code == 200
+        assert all(value not in response.text for value in private)
+    choices = client.get('/api/analysis/voices').json()['choices']['call_types']
+    assert [(row['name'], row['description']) for row in choices] == CALL_TYPE_PRESETS
+
+
 def test_samples_and_deleted_records_are_not_in_trends(client, meow_video):
     from app.models import Observation
     oid, mid = saved(client, meow_video)

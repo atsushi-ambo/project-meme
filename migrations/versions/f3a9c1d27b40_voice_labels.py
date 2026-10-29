@@ -8,6 +8,18 @@ down_revision = 'da307c85e591'
 branch_labels = None
 depends_on = None
 
+# この版の起動時に登録する既定値。将来のアプリ変更で削除判定を変えない。
+DEFAULT_CALL_TYPES = {
+    ('短い「ニャッ」', '短く切れる声'),
+    ('長い「ニャーオ」', '伸ばす声'),
+    ('「ンー」「ルルッ」', '口を閉じ気味の鼻にかかった声・転がるような声'),
+    ('小さい声・口だけ動く', 'ほとんど聞こえない声'),
+    ('「カカカ」', '外や虫を見ながら出す、歯を鳴らすような声'),
+    ('うなる・「シャー」', '低い声や息の音'),
+    ('ゴロゴロ', '喉を鳴らす音'),
+    ('まだ分からない', '種類を決めていない声'),
+}
+
 
 def upgrade():
     op.create_table('call_types',
@@ -44,9 +56,13 @@ def upgrade():
 def downgrade():
     labelled = op.get_bind().execute(sa.text(
         'SELECT EXISTS (SELECT 1 FROM sound_analyses WHERE call_type_id IS NOT NULL OR dictionary_item_id IS NOT NULL '
-        "OR outcome IS NOT NULL OR owner_response <> '' OR call_count IS NOT NULL) "
+        "OR outcome IS NOT NULL OR owner_response <> '' OR call_count IS NOT NULL "
+        "OR assessment <> 'unknown' OR (features IS NOT NULL AND features <> '{}'::jsonb) "
+        'OR updated_at IS NOT NULL) '
         'OR EXISTS (SELECT 1 FROM sound_behaviors)')).scalar()
-    if labelled:
+    custom_types = any(tuple(row) not in DEFAULT_CALL_TYPES for row in
+                       op.get_bind().execute(sa.text('SELECT name, description FROM call_types')))
+    if labelled or custom_types:
         raise RuntimeError('声の分類・行動・その後の記録を自動削除できません。バックアップを確認してください。')
     op.drop_table('sound_behaviors')
     for name in ['sound_analysis_features_object', 'sound_analysis_assessment',

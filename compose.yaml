@@ -14,7 +14,7 @@ x-app: &app
     - ${MEDIA_DIR:?Run scripts/setup.py}:/media
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
-  # コードやライブラリを書き換えられないよう、書き込みはメディアと一時領域だけにする。
+  # 出力ZIPもディスク上の /media/.exports に保存し、/tmpは小さく保つ。
   read_only: true
   tmpfs: ['/tmp:size=64m,mode=1777']
   networks: [backend]

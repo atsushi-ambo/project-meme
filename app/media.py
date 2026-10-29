@@ -14,8 +14,8 @@ from PIL import Image
 from sqlalchemy import select, func, delete
 from .config import settings
 from .db import transaction
-from .models import Cat, Media, Observation, Health, DictionaryItem, now
-from .services import parent
+from .models import CallType, Cat, Media, Observation, Health, DictionaryItem, now
+from .services import CALL_TYPE_PRESETS, parent
 from .media_metadata import video_capture_time
 from .processes import run_bounded
 from .media_info import summarize_probe, technical_summary
@@ -248,6 +248,8 @@ def run_jobs(at=None):
     """排他保守ロックでアップロード・出力との競合を避ける。再実行可能。"""
     at = at or now()
     with transaction(exclusive=True) as db:
+        from .exports import cleanup_exports
+        cleanup_exports(at)
         rows = list(db.scalars(select(Media).with_for_update()))
         for row in rows:
             stale = row.status == 'pending' and row.created_at < at - timedelta(minutes=15)
@@ -296,6 +298,9 @@ def run_jobs(at=None):
             if not remaining:
                 db.execute(delete(Media))
                 db.execute(delete(DictionaryItem))
+                db.execute(delete(CallType))
+                db.add_all(CallType(name=name, description=description)
+                           for name, description in CALL_TYPE_PRESETS)
                 cat = db.get(Cat, 1)
                 cat.name, cat.notes, cat.birthday = 'メメ', '', None
                 (settings.media_root / 'profile.jpg').unlink(missing_ok=True)

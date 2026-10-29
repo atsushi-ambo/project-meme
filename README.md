@@ -46,6 +46,7 @@ docker compose exec web python -m app.demo
 - 取り込み元：`~/Movies/project-meme/inbox/`（アプリからは変更しない）
 - アプリの添付：`~/Movies/project-meme/media/`（Dockerへ接続）
 - 一時ファイル：`media/staging/`
+- 出力ZIP：`media/.exports/`（フォルダ700・ファイル600、送信終了・失敗時に削除。異常停止後の残存分は24時間後から定期整理）
 - PostgreSQL：Dockerの`project-meme_postgres`ボリューム
 
 アプリはファイルをコピーします。取り込み元・バックアップは別に容量を使います。非公開リポジトリでも実動画・写真・DBをGitHubへ上げません。
@@ -93,6 +94,8 @@ python3 scripts/backup.py backup
 ```
 
 アプリを一時停止し、DBダンプとメディアを `~/Library/Application Support/project-meme/backups/日時/` へ保存します。元々起動していたアプリは終了後に再開します。体調CSVやGitHubはバックアップの代わりになりません。
+
+更新前のDBダンプは起動中のDBコンテナ内で取得するため、Composeのネットワーク変更前にも接続できます。処理途中の添付と一時ファイルも一組で保存し、復元後の通常の整理処理で回復します。
 
 復元は既存環境を上書きせず、新しいDockerプロジェクトへ行います。
 

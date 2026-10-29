@@ -26,8 +26,8 @@ def backup(destination, *, restart=True, runner=None):
     running = bool(run(['ps','--status','running','-q','web'],capture_output=True,text=True).stdout.strip())
     try:
         run(['stop','web'])
-        # 回復処理後のDBとファイルを一貫した組として取得する。
-        run(['run','--rm','--no-deps','web','python','-c','from app.media import run_jobs; run_jobs()'])
+        # 新しいComposeネットワークへ移す前のDBにも、既存コンテナ内から接続する。
+        # pending状態とstagingもそのまま保存し、復元後の通常の保守処理で回復する。
         with (destination/'database.dump').open('wb') as f:
             run(['exec','-T','db','pg_dump','-U','meme_owner','-d','meme','-Fc'],stdout=f)
         with tarfile.open(destination/'media.tar','w') as archive:

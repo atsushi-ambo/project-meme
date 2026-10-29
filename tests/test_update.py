@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -176,10 +177,49 @@ def test_backup_is_consistent_and_controls_restart(updater, tmp_path, monkeypatc
         return SimpleNamespace(stdout='running')
     dest = tmp_path / 'snapshot'
     backup.backup(dest, restart=restart, runner=runner)
-    assert calls == ['ps', 'stop', 'run', 'exec'] + (['start'] if restart else [])
+    assert calls == ['ps', 'stop', 'exec'] + (['start'] if restart else [])
     assert json.loads((dest / 'manifest.json').read_text())['complete']
     assert (dest / 'database.dump').read_bytes() == b'test dump'
     assert dest.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize('dump_fails', [False, True])
+def test_update_backs_up_old_network_before_recreating_db(updater, tmp_path, monkeypatch, dump_fails):
+    """バックアップ中は既存DBへのexecだけを使い、新ネットワークのwebを起動しない。"""
+    media = tmp_path / 'media'
+    (media / 'staging').mkdir(parents=True)
+    (media / 'staging' / 'pending').write_bytes(b'pending fixture')
+    monkeypatch.setattr(updater.snapshots, 'ROOT', tmp_path / 'repo')
+    monkeypatch.setattr(updater.snapshots, 'env_values', lambda: {'MEDIA_DIR': str(media)})
+    dest = tmp_path / 'snapshot'
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        assert not ('run' in args and 'web' in args)
+        if 'pg_dump' in args:
+            assert args == ['compose', 'exec', '-T', 'db', 'pg_dump', '-U', 'meme_owner', '-d', 'meme', '-Fc']
+            assert calls[-2] == ['compose', 'stop', 'web']
+            assert not any('up' in call or 'migrate' in call for call in calls)
+            if dump_fails:
+                raise subprocess.CalledProcessError(1, args)
+            kwargs['stdout'].write(b'dump fixture')
+        if 'up' in args and args[-1] == 'db':
+            assert json.loads((dest / 'manifest.json').read_text())['complete']
+            assert (dest / 'database.dump').read_bytes() == b'dump fixture'
+            with tarfile.open(dest / 'media.tar') as archive:
+                assert archive.extractfile('media/staging/pending').read() == b'pending fixture'
+        return SimpleNamespace(stdout='running' if 'ps' in args else '0\n')
+
+    if dump_fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            updater.deliver(command, updater.snapshots.backup, dest, 'revision', 'old-image', 'old-db-image')
+        assert calls[-1] == ['compose', 'start', 'web']
+        assert not any('up' in call or 'migrate' in call for call in calls)
+        assert not (dest / 'manifest.json').exists()
+    else:
+        updater.deliver(command, updater.snapshots.backup, dest, 'revision', 'old-image', 'old-db-image')
+        assert json.loads((dest / 'update.json').read_text())['stage'] == 'complete'
 
 
 @pytest.mark.parametrize('state', ['dirty', 'stopped', 'ready'])
