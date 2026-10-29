@@ -12,6 +12,7 @@ from ..schemas import (AppendInput, GuessesInput, HealthInput, MediaKeepInput,
                        ObservationInput, RecordId, SoundCreateInput)
 from ..services import add_guesses, append_observation, parent, save_entry
 from ..sound_analysis import create as create_sound, media_loudness, update_labels
+from ..voice_match import similar_report
 from ..voices import build_voice_report, sound_summary
 
 router = APIRouter()
@@ -25,6 +26,15 @@ def weekly_review_api(end: str = ''):
 def voices_api():
     with transaction(snapshot=True) as db:
         return build_voice_report(db)
+
+@router.get('/api/analysis/voices/{sound_id}/similar')
+def similar_voices_api(sound_id: RecordId):
+    """声のかたちが近い区間。読み取り専用で、測定の追加や分類の変更はしない。"""
+    with transaction(snapshot=True) as db:
+        report = similar_report(db, sound_id)
+    if report is None:
+        raise HTTPException(404, '声の区間が見つかりません。')
+    return report
 
 @router.get('/api/analysis/observations')
 def comparison_api(ids: str = ''):

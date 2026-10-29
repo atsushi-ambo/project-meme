@@ -1,4 +1,22 @@
 'use strict';
+const healthType = document.querySelector('select[name="event_type"]');
+if (healthType) {
+  const food = document.querySelector('#food-fields');
+  const toilet = document.querySelector('#toilet-fields');
+  const syncHealthFields = () => {
+    for (const [box, type, input] of [[food, 'food', food?.querySelector('input')],
+                                     [toilet, 'toilet', toilet?.querySelector('input')]]) {
+      if (!box || !input) continue;
+      // Keep a filled value visible after switching event type so clearing it
+      // is an explicit action; hidden empty fields still submit as blank.
+      box.hidden = healthType.value !== type && !input.value.trim();
+    }
+  };
+  healthType.addEventListener('change', syncHealthFields);
+  document.querySelectorAll('#food-fields input, #toilet-fields input').forEach(input =>
+    input.addEventListener('input', syncHealthFields));
+  syncHealthFields();
+}
 // 元の日時入力を残して段階的に拡張。送信値は従来どおりISO形式。
 for (const source of document.querySelectorAll('input[type="datetime-local"]')) {
   const originalLabel = source.closest('label');

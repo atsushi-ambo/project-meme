@@ -112,6 +112,9 @@ class Health(Timestamps, Base):
     appetite = Column(String(20))
     energy = Column(String(20))
     details = Column(Text, nullable=False, default='')
+    food_amount = Column(String(120))
+    stool_condition = Column(String(500))
+    time_is_approximate = Column(Boolean)
     is_sample = Column(Boolean, nullable=False, default=False, server_default='false')
     submission_key = Column(String(36), nullable=False, unique=True)
     submission_hash = Column(String(64), nullable=False)
@@ -121,6 +124,8 @@ class Health(Timestamps, Base):
         CheckConstraint("(event_type='weight' AND weight_value > 0 AND weight_value < 100000 AND weight_unit IN ('kg','g') AND weight_value IS NOT NULL AND weight_unit IS NOT NULL) OR (event_type <> 'weight' AND weight_value IS NULL AND weight_unit IS NULL)", name='weight_pair'),
         CheckConstraint("count IS NULL OR (event_type='vomit' AND count BETWEEN 1 AND 1000)", name='vomit_count'),
         CheckConstraint("meal_interval_minutes IS NULL OR (event_type='vomit' AND meal_interval_minutes BETWEEN 0 AND 10080)", name='meal_interval'),
+        CheckConstraint("food_amount IS NULL OR event_type='food'", name='food_amount_kind'),
+        CheckConstraint("stool_condition IS NULL OR event_type='toilet'", name='stool_condition_kind'),
         Index('ix_health_date', 'cat_id', 'occurred_at'),
         Index('ix_health_details_trgm', 'details', postgresql_using='gin',
               postgresql_ops={'details': 'gin_trgm_ops'}),

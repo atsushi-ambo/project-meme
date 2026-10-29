@@ -3,6 +3,7 @@ import hashlib
 from sqlalchemy import select, delete
 from fastapi import HTTPException
 from .models import Cat, Observation, ObservationAppend, Health, Tag, ObservationTag, DictionaryItem, Evidence, Interaction
+from .schemas import HealthInput
 
 KINDS = {'observation': Observation, 'health': Health}
 LABELS = {'vomit':'吐いた','food':'食事','water':'水','toilet':'トイレ','weight':'体重','energy':'元気','other':'その他'}
@@ -20,7 +21,13 @@ def parent(db, kind, id, lock=False):
     return row
 
 def fingerprint(data):
-    return hashlib.sha256(data.model_dump_json().encode()).hexdigest()
+    # New optional health fields are omitted from legacy payload hashes when
+    # empty, so retrying a pre-upgrade request still matches its stored hash.
+    exclude = set()
+    if isinstance(data, HealthInput):
+        exclude = {name for name in ('food_amount', 'stool_condition', 'time_is_approximate')
+                   if getattr(data, name) is None}
+    return hashlib.sha256(data.model_dump_json(exclude=exclude).encode()).hexdigest()
 
 def save_entry(db, kind, data, id=None, *, expected_revision=None):
     # 同じ猫への新規保存を直列化し、再送を既存の結果へ結びつける。
@@ -29,6 +36,16 @@ def save_entry(db, kind, data, id=None, *, expected_revision=None):
     values = data.model_dump(exclude={'tags','submission_key'})
     if id:
         row = parent(db, kind, id, True)
+        if kind == 'health':
+            # Older clients do not send these fields; preserve values they do
+            # not know about. Current HTML forms send them, including clears.
+            for name, required_type in (('food_amount', 'food'), ('stool_condition', 'toilet'),
+                                        ('time_is_approximate', None)):
+                if name not in data.model_fields_set:
+                    if (required_type and row.event_type == required_type
+                            and data.event_type != required_type and getattr(row, name) is not None):
+                        raise HTTPException(422, 'この旧画面では食事量・便の様子を消去して種類を変更できません。新しい画面から編集してください。')
+                    values.pop(name, None)
         if kind == 'observation':
             if row.revision != expected_revision:
                 raise HTTPException(409, '別の画面やCodexから更新されています。入力したメモは下に残しています。保存済みの記録を確認し、編集画面を開き直して内容を合わせてください。')
