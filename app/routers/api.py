@@ -6,7 +6,7 @@ from sqlalchemy import select
 from ..analysis import build_comparison
 from ..db import transaction
 from ..media import set_keep
-from ..models import Media
+from ..models import Media, SoundAnalysis
 from ..reviews import build_weekly_review
 from ..schemas import (AppendInput, GuessesInput, HealthInput, MediaKeepInput,
                        ObservationInput, RecordId, SoundCreateInput)
@@ -129,6 +129,18 @@ async def sound_create_api(request: Request, id: RecordId):
             db.flush()
             return sound_summary(db, result)
     return await anyio.to_thread.run_sync(process)
+
+@router.get('/api/observations/{id}/sounds/{result_id}')
+def sound_api(id: RecordId, result_id: RecordId):
+    # 分類と版番号を同じ時点で読み、別の記録の区間は返さない。
+    with transaction(snapshot=True) as db:
+        parent(db, 'observation', id)
+        result = db.scalar(select(SoundAnalysis).join(Media).where(
+            SoundAnalysis.id == result_id, Media.observation_id == id))
+        if not result:
+            raise HTTPException(404, '声の区間が見つかりません。')
+        return sound_summary(db, result)
+
 
 @router.post('/api/observations/{id}/sounds/{result_id}/labels')
 async def sound_labels_api(request: Request, id: RecordId, result_id: RecordId):

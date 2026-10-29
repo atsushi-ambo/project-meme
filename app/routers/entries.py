@@ -36,8 +36,17 @@ async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
 async def sound_labels(request: Request, id: RecordId, result_id: RecordId):
     raw = sound_form_labels(await read_form(request))
     def process():
-        with transaction() as db:
-            update_labels(db, id, result_id, raw)
+        try:
+            with transaction() as db:
+                update_labels(db, id, result_id, raw)
+        except HTTPException as error:
+            if error.status_code != 409:
+                raise
+            # 入力した文章をコピーできるよう残す。最新の版番号で自動再送しない。
+            response = render(request, 'error.html', message=str(error.detail),
+                sound_draft=raw, sound_url=f'/entries/observation/{id}#sound-{result_id}')
+            response.status_code = 409
+            return response
         return RedirectResponse(f'/entries/observation/{id}#sound-{result_id}', 303)
     return await anyio.to_thread.run_sync(process)
 

@@ -163,6 +163,7 @@ class SoundAnalysis(Base):
     """利用者が選んだ区間の計測と観察。音声そのものは複製しない。"""
     __tablename__ = 'sound_analyses'
     id = Column(BigInteger, primary_key=True)
+    revision = Column(BigInteger, nullable=False, default=1, server_default='1')
     media_id = Column(ForeignKey('media.id', ondelete='CASCADE'), nullable=False, index=True)
     start_ms = Column(Integer, nullable=False)
     end_ms = Column(Integer, nullable=False)

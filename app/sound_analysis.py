@@ -168,12 +168,22 @@ def update_labels(db, observation_id, result_id, raw, *, merge=False):
 
     merge=Trueでは指定した項目だけを変える（ローカルCLI用）。画面のフォームは全項目を送る。
     """
-    data = labels(raw)
     row, result = owned_result(db, observation_id, result_id)
+    raw = dict(raw)
+    expected = raw.pop('expected_revision', None)
+    # フォームだけは文字列。JSONのbool・小数・文字列は版番号として受け付けない。
+    if not merge and isinstance(expected, str) and len(expected) <= 19 and expected.isascii() and expected.isdecimal():
+        expected = int(expected)
+    if type(expected) is not int or not 1 <= expected <= 9223372036854775807 or expected != result.revision:
+        raise HTTPException(409, '声の区間の版番号が未指定、または別の画面で変更されています。画面を再読み込みし、最新の分類と入力内容を確認してください。')
+    data = labels(raw)
     if merge:
         from .voices import label_values
-        data = labels({**label_values(db, result), **raw})
+        current = label_values(db, result)
+        current.pop('revision')
+        data = labels({**current, **raw})
     apply_labels(db, result, row, data, assessment_explicit='assessment' in raw)
+    result.revision += 1
     result.updated_at = now()
     return result
 

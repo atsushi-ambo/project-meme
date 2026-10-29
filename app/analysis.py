@@ -165,7 +165,7 @@ def build_comparison(db, ids_string):
             call_type = db.get(CallType, item.call_type_id) if item.call_type_id else None
             meaning = db.get(DictionaryItem, item.dictionary_item_id) if item.dictionary_item_id else None
             sounds.append({
-                'id': item.id, 'media_id': item.media_id, 'start_seconds': item.start_ms / 1000,
+                'id': item.id, 'revision': item.revision, 'media_id': item.media_id, 'start_seconds': item.start_ms / 1000,
                 'end_seconds': item.end_ms / 1000, 'observation': item.observation,
                 'hypothesis': item.hypothesis, 'unknown': item.unknown,
                 'call_type': {'id': call_type.id, 'name': call_type.name} if call_type else None,

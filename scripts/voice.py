@@ -1,7 +1,8 @@
 """飼い主が確認した声の区間と分類を保存する。既定は確認のみ、--submitで保存。
 
 新しい区間: {"observation_id", "media_id", "start", "end", ...分類}
-既存の区間の書き足し: {"observation_id", "sound_id", ...変更する分類だけ}
+既存の区間の書き足し: {"observation_id", "sound_id", "expected_revision", ...変更する分類だけ}
+編集前の確認: --show 声の区間ID --observation 観察ID
 分類: call_type_id, call_count, behaviors, meaning, assessment, owner_response, outcome,
 observation, hypothesis, unknown。値は飼い主が話した内容だけを入れる。
 """
@@ -23,6 +24,15 @@ def record_id(value, label):
     return value
 
 
+def id_argument(value):
+    if not value.isascii() or not value.isdecimal() or len(value) > 19:
+        raise argparse.ArgumentTypeError('IDは正の整数で指定してください。')
+    try:
+        return record_id(int(value), 'ID')
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def load_draft(path):
     with path.open('rb') as file:
         raw = file.read(65537)
@@ -33,9 +43,10 @@ def load_draft(path):
         raise ValueError('下書きはJSONオブジェクトで指定してください。')
     record_id(draft.get('observation_id'), '観察ID')
     if 'sound_id' in draft:
-        allowed = {'observation_id', 'sound_id'} | LABEL_KEYS
+        allowed = {'observation_id', 'sound_id', 'expected_revision'} | LABEL_KEYS
         record_id(draft['sound_id'], '声の区間ID')
-        if len(draft) < 3:
+        record_id(draft.get('expected_revision'), '確認した声の区間の版番号')
+        if not LABEL_KEYS.intersection(draft):
             raise ValueError('書き足す分類を一つ以上指定してください。')
     else:
         allowed = {'observation_id', 'media_id', 'start', 'end'} | LABEL_KEYS
@@ -51,7 +62,8 @@ def load_draft(path):
 def submit(draft, client):
     oid = draft['observation_id']
     if 'sound_id' in draft:
-        body = {key: value for key, value in draft.items() if key in LABEL_KEYS}
+        # 下書きで確認した版番号を維持する。競合時も読み直して自動再送しない。
+        body = {key: value for key, value in draft.items() if key in LABEL_KEYS | {'expected_revision'}}
         result = client.request('POST', f'/api/observations/{oid}/sounds/{draft["sound_id"]}/labels', body)
         print('書き足し保存済み: ' + client.origin + result['observation_url'], flush=True)
     else:
@@ -65,11 +77,24 @@ def submit(draft, client):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('draft', type=Path, help='区間と分類を記載したJSON下書き')
+    parser.add_argument('draft', nargs='?', type=Path, help='区間と分類を記載したJSON下書き')
+    parser.add_argument('--show', type=id_argument, metavar='ID', help='声の区間の分類と版番号を読み取る（保存しません）')
+    parser.add_argument('--observation', type=id_argument, metavar='ID', help='--showで読む区間が属する観察ID')
     parser.add_argument('--submit', action='store_true', help='下書きを保存する')
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
+    if args.show is not None:
+        if args.observation is None or args.draft is not None or args.submit:
+            parser.error('--show は --observation と指定し、下書きや --submit と同時に指定できません。')
+    elif args.draft is None or args.observation is not None:
+        parser.error('下書き、または --show ID --observation ID を指定してください。')
     try:
+        if args.show is not None:
+            client = LocalClient(args.port)
+            entry = client.request('GET', f'/api/observations/{args.observation}/sounds/{args.show}')
+            entry['base_url'] = client.origin
+            print(json.dumps(entry, ensure_ascii=False, indent=2))
+            return 0
         draft = load_draft(args.draft)
         if not args.submit:
             print(json.dumps(draft, ensure_ascii=False, indent=2))
@@ -78,9 +103,14 @@ def main():
         submit(draft, LocalClient(args.port))
         return 0
     except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
+        if args.show is not None:
+            print(f'声の区間を取得できませんでした: {error}', file=sys.stderr)
+            return 1
         print(f'声の区間を保存できませんでした: {error}\n'
               '「すでに保存されています」(409)は同じ区間が保存済みという意味です。'
-              '記録の画面で確認し、書き足す場合はsound_idを指定してください。', file=sys.stderr)
+              '記録の画面で確認し、書き足す場合はsound_idとexpected_revisionを指定してください。'
+              '更新の409は版番号の競合または未指定です。現在の分類を読み直し、入力内容を見直してください。'
+              '最新の版番号へ自動で差し替えて強制再送しないでください。', file=sys.stderr)
         return 1
 
 

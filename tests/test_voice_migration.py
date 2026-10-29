@@ -82,3 +82,35 @@ def test_voice_downgrade_allows_untouched_defaults_and_empty_features(client, fe
         migrate('upgrade', 'head')
     with transaction() as db:
         assert db.get(SoundAnalysis, sid).observation == '旧版にも残る観察'
+
+
+def test_sound_revision_upgrade_and_downgrade_preserve_labels(client):
+    sid = legacy_sound(client)
+    with transaction() as db:
+        sound = db.get(SoundAnalysis, sid)
+        sound.revision = 7
+        sound.owner_response = '移行しても残す架空の対応'
+        sound.assessment = 'supports'
+    try:
+        migrate('downgrade', 'a6d4e2f81c93')
+        with transaction() as db:
+            assert not db.scalar(text("SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                                      "WHERE table_name = 'sound_analyses' AND column_name = 'revision')"))
+            assert db.execute(text('SELECT observation, owner_response, assessment FROM sound_analyses WHERE id = :id'),
+                              {'id': sid}).one() == ('旧版にも残る観察', '移行しても残す架空の対応', 'supports')
+        migrate('upgrade', 'head')
+        with transaction() as db:
+            sound = db.get(SoundAnalysis, sid)
+            assert sound.revision == 1
+            assert (sound.observation, sound.owner_response, sound.assessment) == (
+                '旧版にも残る観察', '移行しても残す架空の対応', 'supports')
+            assert db.scalar(text("SELECT is_nullable FROM information_schema.columns "
+                                  "WHERE table_name = 'sound_analyses' AND column_name = 'revision'")) == 'NO'
+            # ORMの既定値ではなく、DBの既定値で新規行も1になる。
+            revision = db.scalar(text("INSERT INTO sound_analyses "
+                "(media_id, start_ms, end_ms, rms, peak, observation, hypothesis, unknown, created_at) "
+                "SELECT media_id, 1000, 2000, 0, 0, '', '', '', created_at FROM sound_analyses WHERE id = :id "
+                'RETURNING revision'), {'id': sid})
+            assert revision == 1
+    finally:
+        migrate('upgrade', 'head')
