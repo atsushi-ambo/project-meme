@@ -106,7 +106,9 @@ def build_weekly_review(db, end=''):
     health = [{
         'id': row.id, 'url': f'/entries/health/{row.id}',
         'occurred_at': row.occurred_at.astimezone(JST).isoformat(),
+        'time_is_approximate': row.time_is_approximate,
         'event_type': row.event_type, 'label': LABELS[row.event_type], **preview('details', row.details),
+        'food_amount': row.food_amount, 'stool_condition': row.stool_condition,
         'count': row.count, 'weight_value': str(row.weight_value) if row.weight_value is not None else None,
         'weight_unit': row.weight_unit, 'meal_interval_minutes': row.meal_interval_minutes,
         'appetite': row.appetite, 'energy': row.energy,

@@ -1,10 +1,12 @@
 import io
+import csv
 import os
 import json
+import hashlib
 import re
 import subprocess
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 import pytest
 from fastapi import HTTPException
@@ -98,7 +100,7 @@ def test_dictionary_and_later_response(client):
         assert db.get(Interaction,iid).cat_response=='近づいた'
 
 def test_health_csv_and_invalid_input(client):
-    values=dict(occurred_at='2026-10-04T12:00',event_type='weight',weight_value='4.250',weight_unit='kg',details='=HYPERLINK("bad")\n二行目',submission_key=str(uuid.uuid4()))
+    values=dict(occurred_at='2026-10-04T12:00',event_type='weight',weight_value='4.250',weight_unit='kg',time_is_approximate='false',details='=HYPERLINK("bad")\n二行目',submission_key=str(uuid.uuid4()))
     assert post(client,'/entries/health/save',values).status_code==303
     response=client.get('/health.csv?start=2026-10-04&end=2026-10-04')
     assert response.status_code==200 and "'=HYPERLINK" in response.text
@@ -107,11 +109,130 @@ def test_health_csv_and_invalid_input(client):
     values['weight_value']='-1';values['submission_key']=str(uuid.uuid4())
     response=post(client,'/entries/health/save',values)
     assert response.status_code==422 and 'まだ保存されていません' in response.text
+    assert 'value="false" selected' in response.text
     with transaction() as db:
         row=db.scalar(select(Health)); assert row.occurred_at.hour==3
     with pytest.raises(IntegrityError):
         with transaction() as db:
             db.execute(text("UPDATE health_entries SET weight_value=-1"))
+
+def test_health_food_toilet_quick_entry_and_approximate_time(client):
+    health_list = client.get('/health').text
+    assert '/entries/health/new?event_type=food' in health_list
+    assert '/entries/health/new?event_type=toilet' in health_list
+    food_form = client.get('/entries/health/new?event_type=food')
+    toilet_form = client.get('/entries/health/new?event_type=toilet')
+    assert 'value="food" selected' in food_form.text
+    assert 'value="toilet" selected' in toilet_form.text
+    assert '日時の精度' in food_form.text and 'value="" selected>未指定' in food_form.text
+    common = dict(occurred_at='2026-10-29T08:00', time_is_approximate='true', submission_key=str(uuid.uuid4()))
+    food = {**common, 'event_type':'food', 'food_amount':'いつもの半分', 'details':'朝ご飯をあげて食べた'}
+    response = post(client, '/entries/health/save', food)
+    assert response.status_code == 303
+    food_id = int(response.headers['location'].split('/')[-1])
+    detail = client.get(f'/entries/health/{food_id}')
+    assert 'およそ' in detail.text and 'いつもの半分' in detail.text
+    stool = {**common, 'occurred_at':'2026-10-29T09:00', 'submission_key':str(uuid.uuid4()),
+             'event_type':'toilet', 'stool_condition':'硬め', 'details':'いつも通り'}
+    response = post(client, '/entries/health/save', stool)
+    assert response.status_code == 303
+    stool_id = int(response.headers['location'].split('/')[-1])
+    assert '硬め' in client.get(f'/entries/health/{stool_id}').text
+    csv_text = client.get('/health.csv?start=2026-10-29&end=2026-10-29').text
+    assert 'およそ' in csv_text and 'いつもの半分' in csv_text and '硬め' in csv_text
+    csv_rows = list(csv.reader(io.StringIO(csv_text.lstrip('\ufeff'))))
+    assert csv_rows[0][:9] == ['日時（日本時間）','種類','回数','体重','単位','食事からの分数','食欲','元気さ','メモ']
+    assert csv_rows[0][9:] == ['日時の精度','食べた量','便の様子']
+    exported = {row[1]:row for row in csv_rows[1:]}
+    assert exported['食事'][9:11] == ['およそ','いつもの半分']
+    assert exported['トイレ'][11] == '硬め'
+    report = client.get('/api/reviews/week?end=2026-10-29').json()
+    health_rows = {row['id']:row for row in report['health']}
+    assert health_rows[food_id]['time_is_approximate'] is True
+    assert health_rows[food_id]['food_amount'] == 'いつもの半分'
+    assert health_rows[stool_id]['stool_condition'] == '硬め'
+    review_html = client.get('/review/week?end=2026-10-29').text
+    assert 'およそ' in review_html and 'いつもの半分' in review_html and '硬め' in review_html
+
+def test_health_new_fields_reject_wrong_event_type(client):
+    values = dict(occurred_at='2026-10-29T08:00', event_type='toilet', food_amount='食べた',
+                  submission_key=str(uuid.uuid4()))
+    response = post(client, '/entries/health/save', values)
+    assert response.status_code == 422
+    assert 'まだ保存されていません' in response.text
+    whitespace = {**values, 'event_type':'other', 'food_amount':'   ',
+                  'submission_key':str(uuid.uuid4())}
+    assert post(client, '/entries/health/save', whitespace).status_code == 303
+
+def test_health_legacy_retry_and_edit_preserve_new_fields(client):
+    key = str(uuid.uuid4())
+    payload = dict(occurred_at='2026-10-29T08:00', event_type='food',
+                   details='朝ご飯', submission_key=key)
+    headers = {'Origin':'http://localhost:8000', 'X-CSRF-Token':csrf(client)}
+    first = client.post('/api/entries/health', json=payload, headers=headers)
+    # Simulate the hash stored by the pre-upgrade HealthInput, whose JSON had
+    # no food_amount, stool_condition or time_is_approximate keys.
+    from pydantic import BaseModel, ConfigDict
+    class LegacyHealthInput(BaseModel):
+        # Frozen field set/order from the pre-quick-entry HealthInput schema.
+        model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+        occurred_at: datetime
+        event_type: str
+        count: int | None = None
+        weight_value: str | None = None
+        weight_unit: str | None = None
+        meal_interval_minutes: int | None = None
+        appetite: str | None = None
+        energy: str | None = None
+        details: str = ''
+        submission_key: uuid.UUID
+    from app.schemas import HealthInput
+    parsed = HealthInput.model_validate(payload)
+    old_schema = LegacyHealthInput(occurred_at=parsed.occurred_at, event_type=parsed.event_type,
+        details=parsed.details, submission_key=parsed.submission_key)
+    legacy_hash = hashlib.sha256(old_schema.model_dump_json().encode()).hexdigest()
+    with transaction() as db:
+        db.get(Health, first.json()['id']).submission_hash = legacy_hash
+    retry = client.post('/api/entries/health', json=payload, headers=headers)
+    assert first.status_code == retry.status_code == 200
+    assert first.json()['id'] == retry.json()['id']
+    health_id = first.json()['id']
+    assert post(client, f'/entries/health/{health_id}/save',
+                {**payload, 'submission_key':str(uuid.uuid4())}).status_code == 303
+    with transaction() as db:
+        assert db.get(Health, health_id).time_is_approximate is None
+    current_fields = {**payload, 'food_amount':'いつもの半分', 'time_is_approximate':'true',
+                      'submission_key':str(uuid.uuid4())}
+    assert post(client, f'/entries/health/{health_id}/save', current_fields).status_code == 303
+    old_edit = {**payload, 'submission_key':str(uuid.uuid4())}
+    assert post(client, f'/entries/health/{health_id}/save', old_edit).status_code == 303
+    with transaction() as db:
+        row = db.get(Health, health_id)
+        assert row.food_amount == 'いつもの半分' and row.time_is_approximate is True
+    old_type_change = {**old_edit, 'event_type':'other', 'submission_key':str(uuid.uuid4())}
+    response = post(client, f'/entries/health/{health_id}/save', old_type_change)
+    assert response.status_code == 422 and '新しい画面' in response.text
+    with transaction() as db:
+        assert db.get(Health, health_id).event_type == 'food'
+    cleared = {**old_type_change, 'food_amount':'', 'stool_condition':'',
+               'time_is_approximate':'true'}
+    assert post(client, f'/entries/health/{health_id}/save', cleared).status_code == 303
+    with transaction() as db:
+        row = db.get(Health, health_id)
+        assert row.event_type == 'other' and row.food_amount is None
+
+def test_health_migration_refuses_to_drop_saved_new_values(client):
+    values = dict(occurred_at='2026-10-29T08:00', event_type='food', food_amount='半分',
+                  time_is_approximate='true', submission_key=str(uuid.uuid4()))
+    assert post(client, '/entries/health/save', values).status_code == 303
+    import runpy
+    migration = Path(__file__).resolve().parents[1] / 'migrations/versions/f4c7a9102b6d_health_quick_fields.py'
+    previous_revision = runpy.run_path(str(migration))['down_revision']
+    env = {**os.environ, 'DATABASE_URL':'postgresql+psycopg://meme_owner:test-owner-only@db:5432/meme'}
+    result = subprocess.run(['alembic', 'downgrade', previous_revision], env=env,
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert '新しい健康記録の値' in result.stderr
 
 def test_file_validation_expiry_and_keep(client):
     id=observation(client)
