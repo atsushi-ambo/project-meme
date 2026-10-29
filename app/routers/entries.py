@@ -23,6 +23,29 @@ def sound_form_labels(raw):
     return raw
 
 
+def sound_draft_choices(raw):
+    """競合画面で、文章以外の未保存の選択も読める形で示す。辞書へは何も追加しない。"""
+    from ..services import ASSESSMENTS, BEHAVIORS, GUESS_PRESETS, OUTCOMES
+    def pick(value):
+        return value if isinstance(value, str) else ''
+    choices = []
+    with transaction() as db:
+        call_type = pick(raw.get('call_type_id'))
+        name = db.get(CallType, int(call_type)) if call_type.isdecimal() and len(call_type) <= 18 else None
+        choices.append(('鳴き声の種類', name.name if name else '選ばない'))
+        meaning = pick(raw.get('meaning'))
+        prefix, _, value = meaning.partition(':')
+        item = db.get(DictionaryItem, int(value)) if prefix == 'item' and value.isdecimal() and len(value) <= 18 else None
+        title = item.title if item else GUESS_PRESETS.get(value, '') if prefix == 'preset' else ''
+        choices.append(('意味の予想', title or 'まだ選ばない'))
+    behaviors = raw.get('behaviors') if isinstance(raw.get('behaviors'), list) else []
+    choices += [('この区間で鳴いた回数', pick(raw.get('call_count')) or '未入力'),
+                ('そのときの行動', '、'.join(BEHAVIORS.get(b, b) for b in behaviors) or '未入力'),
+                ('その予想とこの区間の関係', ASSESSMENTS.get(pick(raw.get('assessment')), 'まだ分からない')),
+                ('そのあとのメメ', OUTCOMES.get(pick(raw.get('outcome')), '未入力'))]
+    return choices
+
+
 @router.post('/observations/{id}/sound/{media_id}')
 async def sound_analyse(request: Request, id: RecordId, media_id: RecordId):
     raw = sound_form_labels(await read_form(request))
@@ -42,9 +65,9 @@ async def sound_labels(request: Request, id: RecordId, result_id: RecordId):
         except HTTPException as error:
             if error.status_code != 409:
                 raise
-            # 入力した文章をコピーできるよう残す。最新の版番号で自動再送しない。
+            # 入力した文章と選択をコピーできるよう残す。最新の版番号で自動再送しない。
             response = render(request, 'error.html', message=str(error.detail),
-                sound_draft=raw, sound_url=f'/entries/observation/{id}#sound-{result_id}')
+                sound_draft=raw, sound_choices=sound_draft_choices(raw), sound_url=f'/entries/observation/{id}#sound-{result_id}')
             response.status_code = 409
             return response
         return RedirectResponse(f'/entries/observation/{id}#sound-{result_id}', 303)

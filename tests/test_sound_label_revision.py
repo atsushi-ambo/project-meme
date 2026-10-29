@@ -61,6 +61,8 @@ def test_stale_browser_save_keeps_new_labels_and_unsaved_text(client, labelled_s
     assert '未保存の文章 &lt;/textarea&gt;&lt;script&gt;' in response.text
     assert '<script>alert(1)</script>' not in response.text
     assert all(note in response.text for note in ['古い画面での対応', '古い画面での予想', '古い画面での不明点'])
+    # 文章以外の未保存の選択も、読める名前で残す。
+    assert all(choice in response.text for choice in ['ごはんがほしい', '合っていそう', 'こちらを見る'])
     assert snapshot(sid) == before
 
 

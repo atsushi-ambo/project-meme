@@ -1,2 +1,3 @@
 {% extends 'base.html' %}{% block content %}<div class="card"><h1>処理を完了できませんでした</h1><p>{{ message }}</p><p>入力内容を確認して再試行してください。ブラウザで前のページへ戻れます。</p>{% if sound_draft is defined %}<p><a href="{{ sound_url }}">最新の声の区間を読み込む</a>前に、必要な入力内容をコピーしてください。</p>
+<dl class="sound-labels">{% for label, value in sound_choices %}<dt>{{ label }}（未保存）</dt><dd>{{ value }}</dd>{% endfor %}</dl>
 {% for key, label in [('owner_response', 'こちらがしたこと'), ('observation', '聞こえたこと・見えたこと'), ('hypothesis', '意味の予想のメモ'), ('unknown', '分からないこと')] %}<label>{{ label }}（未保存）<textarea readonly>{{ sound_draft.get(key, '') }}</textarea></label>{% endfor %}{% endif %}<a class="button" href="/">ホームへ</a></div>{% endblock %}

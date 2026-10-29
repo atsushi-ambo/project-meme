@@ -92,7 +92,7 @@ def test_sound_revision_upgrade_and_downgrade_preserve_labels(client):
         sound.owner_response = '移行しても残す架空の対応'
         sound.assessment = 'supports'
     try:
-        migrate('downgrade', 'a6d4e2f81c93')
+        migrate('downgrade', 'f4c7a9102b6d')
         with transaction() as db:
             assert not db.scalar(text("SELECT EXISTS (SELECT 1 FROM information_schema.columns "
                                       "WHERE table_name = 'sound_analyses' AND column_name = 'revision')"))
