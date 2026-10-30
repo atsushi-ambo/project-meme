@@ -65,7 +65,28 @@ def write_review(output, report):
     else:
         rows.append('<p>抽出した音声はありません。鳴いていなかったという判断には使えません。</p>')
     rows.append(pictures(report.get('frames', []), output))
-    rows.append('<h2>3. 大きい音の候補を確認する</h2><p>これはこの動画内で相対的に大きい音の候補です。'
+    rows.append('<h2>3. 猫の声らしい候補を確認する</h2>'
+                '<p>一般的な猫の声の特徴を使うモデルの候補です。メメの声か、意味や意図は確定していません。</p>')
+    detector = report.get('cat_detector') or {}
+    if detector.get('available') is not True:
+        rows.append('<p>' + text(detector.get('notice') or '猫の声のモデルは、この資料では実行されていません。') + '</p>')
+    elif not report.get('cat_candidates'):
+        rows.append('<p>モデルによる候補はありません。鳴いていなかったという意味ではありません。</p>')
+    for index, span in enumerate(report.get('cat_candidates', []), 1):
+        start, end = span.get('start'), span.get('end')
+        if (type(start) not in (int, float) or type(end) not in (int, float)
+                or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < min(end, duration)):
+            rows.append(f'<p>モデル候補 {index}は区間を確認できず表示していません。</p>')
+            continue
+        end = min(end, duration)
+        rows.append(f'<section><h3>モデル候補 {index}：{start:g}〜{end:g}秒 · 未確認</h3>'
+                    f'<p>モデルが挙げた種類：{text(span.get("kind_label") or "不明")}</p>')
+        if has_audio:
+            rows.append(f'<audio controls preload="none" src="audio.wav#t={start:g},{end:g}"></audio>')
+        if span.get('speech'):
+            rows.append('<p>人の声が混ざっている可能性もあります。</p>')
+        rows.append(pictures(span.get('frames', []), output) + '</section>')
+    rows.append('<h2>大きい音の候補も確認する</h2><p>これはこの動画内で相対的に大きい音の候補です。'
                 '静かな声を見落とす場合があり、人声や物音も含みます。鳴き声の検出結果ではありません。</p>')
     skipped = 0
     for index, span in enumerate(report.get('loud_candidates', []), 1):

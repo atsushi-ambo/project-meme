@@ -15,6 +15,15 @@ def module(monkeypatch):
     return runpy.run_path(str(root / 'scripts/prepare_analysis.py'))
 
 
+def local_classifier(source_path, output):
+    """コンテナの代わりに同じモジュールを直接使う。"""
+    from app import sound_events
+    from app.acoustics import samples_from_pcm
+    import wave
+    with wave.open(str(output / 'audio.wav'), 'rb') as audio:
+        return sound_events.detect(samples_from_pcm(audio.readframes(audio.getnframes())))
+
+
 def report():
     return {'observations': [{'id': 1, 'description': '飼い主のメモ', 'media': [{
         'id': 2, 'available': True, 'status': 'ready', 'mime_type': 'video/mp4',
@@ -56,6 +65,7 @@ def test_synthetic_video_to_private_analysis_bundle(module, tmp_path, monkeypatc
     prepare = module['prepare']
     monkeypatch.setitem(prepare.__globals__, 'download', fake_download)
     monkeypatch.setitem(prepare.__globals__, 'run_ffmpeg', ffmpeg)
+    monkeypatch.setitem(prepare.__globals__, 'run_classifier', local_classifier)
     base = tmp_path / 'private'
     result = prepare(Client(), 1, 2, base)
     result_data = json.loads((result / 'report.json').read_text())
@@ -102,6 +112,7 @@ def test_loud_candidates_get_features_and_nearby_frames(module, tmp_path, monkey
     prepare = module['prepare']
     monkeypatch.setitem(prepare.__globals__, 'download', fake_download)
     monkeypatch.setitem(prepare.__globals__, 'run_ffmpeg', ffmpeg)
+    monkeypatch.setitem(prepare.__globals__, 'run_classifier', local_classifier)
     result = prepare(Client(), 1, 2, tmp_path / 'private')
     result_data = json.loads((result / 'report.json').read_text())
     [candidate] = result_data['loud_candidates']

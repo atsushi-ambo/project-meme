@@ -9,6 +9,7 @@ from ..db import transaction
 from ..media import request_delete
 from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Media, SoundAnalysis, Tag, now
 from ..sound_analysis import create as create_sound_analysis, remeasure, update_labels
+from ..voice_match import LABEL_LIMIT
 from ..schemas import (CallTypeInput, DictionaryInput, EvidenceInput, GuessesInput, HealthInput,
                        InteractionInput, JST, ObservationEditInput, ObservationInput, RecordId)
 from ..services import add_guesses, parent, save_dictionary, save_entry, save_evidence, save_interaction
@@ -107,6 +108,52 @@ async def call_type_save(request: Request, id: RecordId | None = None):
             row.name, row.description = data.name, data.description
             db.add(row)
         return RedirectResponse('/voices#call-types', 303)
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/voices/groups/label')
+async def voice_group_label(request: Request):
+    """飼い主が確認したグループの、種類未選択の区間にだけ種類を付ける。上書きはしない。"""
+    raw = await read_form(request)
+    try:
+        targets = []
+        for value in raw.get('sound_ids', []):
+            sound_id, _, revision = str(value).partition(':')
+            targets.append((id_validator.validate_python(sound_id), id_validator.validate_python(revision)))
+        ids = [sound_id for sound_id, _ in targets]
+        new_name = str(raw.get('new_call_type', '')).strip()
+        chosen = id_validator.validate_python(raw['call_type_id']) if raw.get('call_type_id') else None
+        if new_name:
+            CallTypeInput.model_validate({'name': new_name})
+    except (ValidationError, KeyError):
+        raise HTTPException(422, '区間と鳴き声の種類を確認してください。')
+    if not 1 <= len(ids) <= LABEL_LIMIT or len(set(ids)) != len(ids) or (chosen is None) == (not new_name):
+        raise HTTPException(422, '種類を一つ選ぶか、新しい名前を入力してください。')
+    def process():
+        with transaction() as db:
+            # 種類の新規作成と区間の更新を、ほかの分類の保存と同じ順で直列化する。
+            db.scalar(select(Cat).where(Cat.id == 1).with_for_update())
+            type_id = chosen
+            if type_id is not None and db.get(CallType, type_id) is None:
+                raise HTTPException(422, '鳴き声の種類を選び直してください。')
+            if new_name:
+                existing = db.scalar(select(CallType.id).where(CallType.name == new_name))
+                if existing is None:
+                    created = CallType(name=new_name, description='')
+                    db.add(created)
+                    db.flush()
+                    existing = created.id
+                type_id = existing
+            labelled = 0
+            for sound_id, revision in targets:
+                found = db.execute(select(SoundAnalysis.call_type_id, Media.observation_id).join(Media)
+                                   .where(SoundAnalysis.id == sound_id)).first()
+                if found is None or found.observation_id is None:
+                    raise HTTPException(404, '声の区間が見つかりません。')
+                if found.call_type_id is None:
+                    update_labels(db, found.observation_id, sound_id,
+                                  {'call_type_id': type_id, 'expected_revision': revision}, merge=True)
+                    labelled += 1
+        return RedirectResponse(f'/voices/groups?labelled={labelled}', 303)
     return await anyio.to_thread.run_sync(process)
 
 @router.post('/observations/{id}/sound-result/{result_id}/delete')

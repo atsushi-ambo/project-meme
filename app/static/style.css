@@ -60,3 +60,5 @@
 .voice-map .dot{stroke:var(--white);stroke-width:2}.voice-map a:hover .dot,.voice-map a:focus .dot{stroke:var(--ink)}
 .map-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;margin:8px 0}.map-legend span{display:inline-flex;gap:6px;align-items:center}
 .map-legend svg{width:12px;height:12px}
+.candidate-heading{flex-basis:100%;margin:10px 0 0;font-weight:600;font-size:14px}
+.group-label-form{border-top:1px solid var(--line);padding-top:12px}.voice-group h2{font-size:17px;margin:0}

@@ -41,7 +41,7 @@ async def read_form(request):
     supplied = str(form.get('csrf', ''))
     if not token_matches(supplied, request.state.csrf):
         raise HTTPException(403, '送信を確認できません。ページを開き直してください。')
-    return {key: form.getlist(key) if key in {'tags', 'guesses', 'behaviors'} else value for key, value in form.items() if key != 'csrf'}
+    return {key: form.getlist(key) if key in {'tags', 'guesses', 'behaviors', 'sound_ids'} else value for key, value in form.items() if key != 'csrf'}
 
 def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30, real_only=False):
     query = select(model).where(model.deletion_requested_at.is_(None))

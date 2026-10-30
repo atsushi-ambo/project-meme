@@ -12,7 +12,7 @@ from ..schemas import (AppendInput, GuessesInput, HealthInput, MediaKeepInput,
                        ObservationInput, RecordId, SoundCreateInput)
 from ..services import add_guesses, append_observation, parent, save_entry
 from ..sound_analysis import create as create_sound, media_loudness, update_labels
-from ..voice_match import similar_report
+from ..voice_match import groups, similar_report
 from ..voices import build_voice_report, sound_summary
 
 router = APIRouter()
@@ -26,6 +26,11 @@ def weekly_review_api(end: str = ''):
 def voices_api():
     with transaction(snapshot=True) as db:
         return build_voice_report(db)
+
+@router.get('/api/analysis/voices/groups')
+def voice_groups_api():
+    with transaction(snapshot=True) as db:
+        return groups(db)
 
 @router.get('/api/analysis/voices/{sound_id}/similar')
 def similar_voices_api(sound_id: RecordId):

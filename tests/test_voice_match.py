@@ -107,3 +107,35 @@ def test_samples_are_not_suggested_and_old_measurements_can_be_upgraded(client, 
     assert '声のかたちを測って似ている声を探す' in client.get(f'/entries/observation/{oid}').text
     assert post(client, f'/observations/{oid}/sound-result/{target_id}/measure', {}).status_code == 303
     assert client.get(f'/api/analysis/voices/{target_id}/similar').json()['measured'] is True
+
+
+def test_groups_collect_close_voices_and_label_only_unlabelled(client, videos):
+    from app.models import CallType
+    _, labelled_id = segment(client, videos['rise'], '短い「ニャッ」')
+    _, unlabelled_id = segment(client, videos['rise2'])
+    _, flat_id = segment(client, videos['flat'], end='0.8')
+
+    report = client.get('/api/analysis/voices/groups').json()
+    [group] = report['groups']
+    assert {m['id'] for m in group['members']} == {labelled_id, unlabelled_id}
+    assert group['unlabeled_ids'] == [unlabelled_id] and flat_id not in group['unlabeled_ids']
+    page = client.get('/voices/groups').text
+    assert '似ている声のグループ' in page and '2件のグループ' in page
+
+    url = '/voices/groups/label'
+    [target] = group['unlabeled_targets']
+    assert target == f'{unlabelled_id}:1'
+    assert post(client, url, {'sound_ids': [target]}).status_code == 422                 # 種類なし
+    assert post(client, url, {'sound_ids': [str(unlabelled_id)]}).status_code == 422     # 版番号なし
+    assert post(client, url, {'sound_ids': [target], 'call_type_id': '999999'}).status_code == 422
+    assert post(client, url, {'sound_ids': ['999999:1'], 'new_call_type': 'x'}).status_code == 404
+    # 別の画面で変更された後の古い版番号では保存しない。
+    assert post(client, url, {'sound_ids': [f'{unlabelled_id}:2'], 'new_call_type': '朝の短い声'}).status_code == 409
+    response = post(client, url, {'sound_ids': [target, f'{labelled_id}:1'], 'new_call_type': '朝の短い声'})
+    assert response.status_code == 303 and response.headers['location'] == '/voices/groups?labelled=1'
+    with transaction() as db:
+        new_type = db.scalar(select(CallType.id).where(CallType.name == '朝の短い声'))
+        assert db.get(SoundAnalysis, unlabelled_id).call_type_id == new_type
+        # すでに付いていた種類は上書きしない。
+        assert db.get(SoundAnalysis, labelled_id).call_type_id == call_type_id('短い「ニャッ」')
+    assert client.get('/api/analysis/voices/groups').json()['groups'][0]['unlabeled'] == 0

@@ -48,3 +48,14 @@ def test_review_reports_provenance_and_missing_media(tmp_path):
     assert '元記録の版：3' in html and '2026-10-30T00:00:00Z' in html
     assert '2026-10-29T08:00:00+09:00' in html
     assert '画像 1件は' in html and '<audio' not in html
+
+
+def test_review_keeps_model_candidates_distinct_from_loudness(tmp_path):
+    (tmp_path / 'audio.wav').write_bytes(b'test')
+    MODULE['write_review'](tmp_path, {'observation_id': 1, 'media_id': 2, 'original_name': 'test.mov',
+        'duration_seconds': 2, 'memo': '', 'frames': [], 'audio_file': 'audio.wav',
+        'loud_candidates': [], 'saved_segments': [], 'cat_detector': {'available': True},
+        'cat_candidates': [{'start': 0.5, 'end': 1.5, 'kind_label': '<script>種類</script>', 'speech': True}]})
+    html = (tmp_path / 'review.html').read_text(encoding='utf-8')
+    assert 'モデル候補 1' in html and '&lt;script&gt;種類&lt;/script&gt;' in html
+    assert '<script>' not in html and '人の声が混ざっている可能性' in html

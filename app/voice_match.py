@@ -45,7 +45,7 @@ def pool(db, limit=POOL_LIMIT):
 
 def neighbor_entry(result, observation, type_name, title, measured):
     return {
-        'id': result.id, 'observation_id': observation.id,
+        'id': result.id, 'revision': result.revision, 'observation_id': observation.id,
         'url': f'/entries/observation/{observation.id}#sound-{result.id}',
         'occurred_at': local_time(observation.occurred_at),
         'start_seconds': result.start_ms / 1000, 'end_seconds': result.end_ms / 1000,
@@ -176,3 +176,54 @@ def type_shapes(rows, limit=12):
             if len(lines) < limit:
                 lines.append(sparkline(centered(row['features']['shape_st'])))
     return shapes
+
+
+GROUP_LIMIT = 300      # グループ分けは新しい300区間まで（総当たりの比較のため）。
+GROUP_CLOSE = 2.0      # 名前をまとめて付けるため、グループは「近い」より狭く取る。
+LABEL_LIMIT = 30       # 一度に種類を付ける区間の数（フォームの項目数の上限内）。
+
+
+def groups(db, limit=GROUP_LIMIT):
+    """声のかたちがよく似た区間（距離2未満）をまとめる。
+
+    近い相手が多い区間から順に中心にし、まだどこにも入っていない近い区間を集める。
+    一つずつつながって遠い声まで同じグループになること（連鎖）を避けるため、
+    メンバーは必ず中心の声と「近い」。2件以上のまとまりだけを返す。
+    """
+    candidates = pool(db, limit)
+    medians = [sorted(r.features['shape_st'])[SHAPE_POINTS // 2] for r, _, _, _ in candidates]
+    lengths = [max(r.features.get('voiced_ms') or 0, 20) for r, _, _, _ in candidates]
+    near = [dict() for _ in candidates]
+    for i in range(len(candidates)):
+        for j in range(i + 1, len(candidates)):
+            # 高さと長さの差だけで「近い」を超える組はDTWを計算しない。
+            if 0.5 * abs(medians[i] - medians[j]) + 2 * abs(math.log2(lengths[i] / lengths[j])) >= GROUP_CLOSE:
+                continue
+            measured = voice_distance(candidates[i][0].features, candidates[j][0].features)
+            if measured and measured['distance'] < GROUP_CLOSE:
+                near[i][j] = near[j][i] = measured
+    order = sorted(range(len(candidates)), key=lambda i: (-len(near[i]), -candidates[i][0].id))
+    assigned, found = set(), []
+    for seed in order:
+        if seed in assigned:
+            continue
+        members = [seed] + sorted((j for j in near[seed] if j not in assigned), key=lambda j: near[seed][j]['distance'])
+        if len(members) < 2:
+            continue
+        assigned.update(members)
+        rows = []
+        for j in members:
+            result, observation, type_name, title = candidates[j]
+            measured = near[seed].get(j) or {'distance': 0.0, 'shape_st': 0.0, 'level_st': 0.0, 'length_ratio': 1.0}
+            rows.append(neighbor_entry(result, observation, type_name, title, measured))
+        unlabeled = [row for row in rows if not row['call_type']]
+        found.append({
+            'seed_id': candidates[seed][0].id, 'size': len(rows), 'members': rows,
+            'unlabeled_ids': [row['id'] for row in unlabeled][:LABEL_LIMIT], 'unlabeled': len(unlabeled),
+            # 画面で見た版番号。別の画面で変更されていたら保存を断る。
+            'unlabeled_targets': [f"{row['id']}:{row['revision']}" for row in unlabeled][:LABEL_LIMIT],
+            'shapes': [sparkline(row['shape']) for row in rows[:12]],
+            'hints': hints(rows),
+        })
+    found.sort(key=lambda g: (-g['unlabeled'], -g['size'], g['seed_id']))
+    return {'groups': found, 'compared': len(candidates), 'limit': limit, 'notice': MATCH_NOTICE}
