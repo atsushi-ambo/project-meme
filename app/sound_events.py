@@ -5,6 +5,8 @@
 """
 from io import BytesIO
 import json
+import os
+from pathlib import Path
 import sys
 import threading
 import zipfile
@@ -28,9 +30,9 @@ def model_path():
     return settings.sound_model_path
 
 
-def load():
+def load(path=None):
     """モデルを一度だけ読み込む。使えなければNone。"""
-    path = model_path()
+    path = model_path() if path is None else path
     with _lock:
         if path in _model:
             return _model[path]
@@ -54,10 +56,10 @@ def available():
     return load() is not None
 
 
-def window_scores(values):
+def window_scores(values, path=None):
     """約0.49秒ごとの、猫の声の各種類と人の声の強さ（0〜1）。"""
     import numpy as np
-    model = load()
+    model = load(path)
     if model is None:
         return None
     labels = model['labels']
@@ -108,9 +110,9 @@ def spans(rows, levels, threshold=THRESHOLD):
     return found
 
 
-def detect(values):
+def detect(values, *, path=None):
     """音声全体から猫の声らしい区間。モデルがなければavailable=False。"""
-    rows = window_scores(values)
+    rows = window_scores(values, path)
     if rows is None:
         return {'available': False, 'spans': [], 'notice': '猫の声の判定モデルがありません。音量の候補を使ってください。'}
     return {'available': True, 'spans': spans(rows, loudness(values)), 'notice': NOTICE,
@@ -125,7 +127,9 @@ def main():
         if audio.getnchannels() != 1 or audio.getsampwidth() != 2 or audio.getframerate() != RATE:
             raise SystemExit('16kHzモノラルのWAVが必要です。')
         values = samples_from_pcm(audio.readframes(RATE * 600))
-    print(json.dumps(detect(values), ensure_ascii=False))
+    # 単独コンテナではDBやセッションの設定を読み込まない。モデルの場所だけを使う。
+    path = Path(os.environ.get('SOUND_MODEL_PATH', '/opt/meme/yamnet.tflite'))
+    print(json.dumps(detect(values, path=path), ensure_ascii=False))
 
 
 if __name__ == '__main__':

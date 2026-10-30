@@ -1,5 +1,11 @@
 """YAMNetによる猫の声らしい区間の候補を検証する。第三者の録音はリポジトリに入れない。"""
 import math
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import wave
 
 import pytest
 
@@ -55,3 +61,23 @@ def test_loudness_api_includes_cat_candidates(client, tmp_path):
     data = api(client, f'/api/observations/{oid}/media/{mid}/loudness', {}).json()
     assert data['cat_available'] is True and data['cat_candidates'] == []
     assert 'メメの声か' in data['cat_notice'] and isinstance(data['candidates'], list)
+
+
+@pytest.mark.parametrize('missing_model', [False, True])
+def test_standalone_classifier_needs_no_database_or_session_secret(tmp_path, missing_model):
+    audio_path = tmp_path / 'silence.wav'
+    with wave.open(str(audio_path), 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(RATE)
+        audio.writeframes(b'\x00\x00' * RATE * 2)
+    env = {key: value for key, value in os.environ.items() if key not in ('DATABASE_URL', 'SECRET_KEY')}
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    env['SOUND_MODEL_PATH'] = str(tmp_path / 'missing.tflite' if missing_model else settings.sound_model_path)
+    entry = "import runpy, sys; runpy.run_module('app.sound_events', run_name='__main__'); assert 'app.config' not in sys.modules"
+    result = subprocess.run([sys.executable, '-c', entry, str(audio_path)],
+                            cwd=Path(__file__).resolve().parents[1], env=env,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report['available'] is (not missing_model) and report['spans'] == []
