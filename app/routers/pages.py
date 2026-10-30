@@ -10,6 +10,7 @@ from ..exports import health_csv
 from ..media import used_bytes
 from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Health, Interaction, Media, Observation, SoundAnalysis, Tag
 from ..reviews import build_weekly_review
+from ..timeline import day_timeline
 from ..schemas import RecordId
 from ..services import LABELS, parent
 from ..voice_match import matches_for
@@ -29,6 +30,11 @@ def home(request: Request):
 def weekly_review(request: Request, end: str = ''):
     with transaction(snapshot=True) as db:
         return render(request, 'review.html', report=build_weekly_review(db, end))
+
+@router.get('/timeline')
+def timeline(request: Request, day: str = '', page: int = 1):
+    with transaction(snapshot=True) as db:
+        return render(request, 'timeline.html', timeline=day_timeline(db, day, page))
 
 @router.get('/voices')
 def voices(request: Request):
