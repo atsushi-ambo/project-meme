@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>一日の記録</h1>
+<p>声・行動と体調の記録を、入力された日時の順（日本時間）に表示します。前後に並んでいても、関係や原因を示すものではありません。詳しい内容は元の記録で確認できます。</p>
+<form class="filters" method="get" action="/timeline"><label>日付<input type="date" name="day" value="{{ timeline.day }}" required></label><button>この日を見る</button></form>
+<div class="actions">{% if timeline.previous %}<a href="/timeline?day={{ timeline.previous }}">← 前の日</a>{% endif %}{% if timeline.next %}<a href="/timeline?day={{ timeline.next }}">次の日 →</a>{% endif %}<a href="/timeline">今日</a></div>
+<h2>{{ timeline.day }}</h2>
+{% for item in timeline.rows %}{% set row = item.entry %}
+<article class="card">
+  <a href="/entries/{{ item.kind }}/{{ row.id }}"><strong>{{ row.occurred_at|localtime }}</strong> · {% if item.kind == 'health' %}{{ labels.get(row.event_type, '体調の記録') }}{% else %}声・行動{% endif %}</a>
+  {% if item.kind == 'health' %}
+  <small> · {% if row.time_is_approximate is true %}およそ{% elif row.time_is_approximate is none %}日時精度不明{% else %}入力した時刻{% endif %}</small>
+  {% if row.food_amount %}<p>食べた量：{{ row.food_amount }}</p>{% endif %}
+  {% if row.stool_condition %}<p>便の様子：{{ row.stool_condition }}</p>{% endif %}
+  {% if row.details %}<p class="preserve">{{ row.details|truncate(300, true, '...', 0) }}</p>{% if row.details|length > 300 %}<p>続きは元の記録で確認できます。</p>{% endif %}{% endif %}
+  {% else %}
+  {% if row.location %}<p>場所：{{ row.location }}</p>{% endif %}<p class="preserve">{{ row.description|truncate(300, true, '...', 0) }}</p>{% if row.description|length > 300 %}<p>続きは元の記録で確認できます。</p>{% endif %}
+  {% if item.sounds %}<p>記録した声の区間（添付内の秒数）：</p><ul>{% for sound in item.sounds %}<li><a href="/entries/observation/{{ row.id }}#sound-{{ sound.id }}">{{ sound.name }} · {{ sound.start_ms / 1000 }}〜{{ sound.end_ms / 1000 }}秒</a>{% if sound.status != 'ready' %}（原本は利用できません）{% endif %}</li>{% endfor %}</ul>{% if item.sound_total > item.sounds|length %}<p>ほか {{ item.sound_total - item.sounds|length }} 区間は元の記録で確認できます。</p>{% endif %}{% endif %}
+  {% endif %}
+</article>
+{% else %}<p class="card empty">このページに記録はありません。未記録は、出来事がなかったことを意味しません。</p>{% endfor %}
+<div class="actions">{% if timeline.page > 1 %}<a href="/timeline?day={{ timeline.day }}&amp;page={{ timeline.page - 1 }}">← 前のページ</a>{% endif %}{% if timeline.has_next %}<a href="/timeline?day={{ timeline.day }}&amp;page={{ timeline.page + 1 }}">次のページ →</a>{% endif %}</div>
+{% endblock %}
