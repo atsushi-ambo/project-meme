@@ -12,5 +12,7 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=60, ge=1, le=3650)
     upload_timeout: int = Field(default=300, ge=5, le=3600)
     job_interval: int = 60
+    # 猫の声らしい区間の候補に使うYAMNet。ない場合は音量の候補だけを使う。
+    sound_model_path: Path = Path('/opt/meme/yamnet.tflite')
 
 settings = Settings()

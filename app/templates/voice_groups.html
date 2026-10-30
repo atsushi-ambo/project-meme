@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% from 'macros.html' import token %}{% block content %}
+<div class="section-title"><div><p class="eyebrow">VOICES</p><h1>似ている声のグループ</h1></div><a class="button secondary" href="/voices">鳴き声の傾向へ</a></div>
+<p>声のかたち（高さの動き・高さ・長さ）が互いに「近い」区間をまとめました。グループの声を聞いて同じ種類だと思えたら、まとめて名前を付けられます。種類がまだ付いていない区間だけに付け、付いている種類は変えません。</p>
+<p class="muted">{{ report.notice }} 新しい{{ report.limit }}区間までを比べています（今回 {{ report.compared }}件）。</p>
+{% if request.query_params.get('labelled') %}<p class="card">{{ request.query_params.get('labelled') }}件に種類を付けました。</p>{% endif %}
+{% for g in report.groups %}<article class="card voice-group">
+<div class="shape-row"><svg class="voice-shape shape-overlay" viewBox="0 0 120 36" role="img" aria-label="このグループの声のかたち {{ g.shapes|length }}件"><line x1="0" y1="18" x2="120" y2="18" class="shape-mid"/>{% for line in g.shapes %}<polyline points="{{ line }}" class="shape-line"/>{% endfor %}</svg>
+<div><h2>{{ g.size }}件のグループ</h2><p class="muted">種類未選択 {{ g.unlabeled }}件{% if g.hints.call_types %} · 付いている種類 {% for t in g.hints.call_types %}「{{ t.name }}」{{ t.count }}件{{ '、' if not loop.last }}{% endfor %}{% endif %}{% if g.hints.meanings %} · 予想 {% for m in g.hints.meanings %}{{ m.title }}（合っていそう{{ m.counts.supports }}・合わなそう{{ m.counts.contradicts }}・未判断{{ m.counts.unknown }}）{{ '、' if not loop.last }}{% endfor %}{% endif %}</p></div></div>
+<ol class="match-list">{% for n in g.members %}<li><svg class="voice-shape small" viewBox="0 0 120 36" aria-hidden="true"><line x1="0" y1="18" x2="120" y2="18" class="shape-mid"/><polyline points="{{ sparkline(n.shape) }}" class="shape-line"/></svg><div><a href="{{ n.url }}">{{ n.occurred_at|isotime }} · {{ n.start_seconds }}〜{{ n.end_seconds }}秒</a>{% if not loop.first %} <span class="pill">{{ n.closeness }}</span>{% else %} <span class="pill">中心の声</span>{% endif %}<br><span class="muted">{{ n.call_type.name if n.call_type else '種類未選択' }}{% if n.meaning %} · 予想「{{ n.meaning.title }}」{{ n.meaning.assessment_label }}{% endif %}{% if n.outcome %} · そのあと：{{ n.outcome.label }}{% endif %}</span></div></li>{% endfor %}</ol>
+{% if g.unlabeled_ids %}<form method="post" action="/voices/groups/label" class="group-label-form">{{ token(csrf) }}{% for target in g.unlabeled_targets %}<input type="hidden" name="sound_ids" value="{{ target }}">{% endfor %}
+<label>種類未選択の{{ g.unlabeled_ids|length }}件に付ける種類<select name="call_type_id"><option value="">新しい名前を付ける</option>{% for t in call_types %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+<label>新しい種類の名前（上で選ばないとき）<input name="new_call_type" maxlength="40" placeholder="例：朝の短い「ニャッ」"></label>
+<button>聞いて確かめたので、この名前を付ける</button></form>{% endif %}
+</article>{% else %}<p class="card">まだグループはありません。声のかたちを測った区間が2件以上あり、互いに「近い」とまとまります。</p>{% endfor %}
+{% endblock %}

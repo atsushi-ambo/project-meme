@@ -10,3 +10,5 @@ itsdangerous==2.2.0
 Pillow==13.0.0
 pytest==9.1.1
 httpx==0.28.1
+ai-edge-litert==2.3.0
+numpy==2.5.4

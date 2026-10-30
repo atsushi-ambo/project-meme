@@ -4,6 +4,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 WORKDIR /app
 COPY requirements.lock .
 RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
+# 猫の声の候補に使うYAMNet。ハッシュが一致しない場合はビルドを止める。
+COPY scripts/fetch_sound_model.py /tmp/fetch_sound_model.py
+RUN python /tmp/fetch_sound_model.py /opt/meme/yamnet.tflite && rm /tmp/fetch_sound_model.py
 RUN useradd -u 1000 -m meme && install -d -o meme -g meme -m 700 /media
 COPY . .
 USER meme

@@ -13,7 +13,7 @@ from ..reviews import build_weekly_review
 from ..timeline import day_timeline
 from ..schemas import RecordId
 from ..services import LABELS, parent
-from ..voice_match import matches_for
+from ..voice_match import groups, matches_for
 from ..voices import build_voice_report, label_values
 from ..web import filtered, render
 
@@ -35,6 +35,12 @@ def weekly_review(request: Request, end: str = ''):
 def timeline(request: Request, day: str = '', page: int = 1):
     with transaction(snapshot=True) as db:
         return render(request, 'timeline.html', timeline=day_timeline(db, day, page))
+
+@router.get('/voices/groups')
+def voice_groups(request: Request):
+    with transaction(snapshot=True) as db:
+        call_types = list(db.scalars(select(CallType).order_by(CallType.id)))
+        return render(request, 'voice_groups.html', report=groups(db), call_types=call_types)
 
 @router.get('/voices')
 def voices(request: Request):
