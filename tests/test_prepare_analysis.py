@@ -63,6 +63,9 @@ def test_synthetic_video_to_private_analysis_bundle(module, tmp_path, monkeypatc
     assert len(result_data['frames']) == 2
     assert (result / 'audio.wav').is_file()
     assert (result / 'spectrogram.png').is_file()
+    assert (result / 'review.html').is_file() and (result / 'review.md').is_file()
+    assert 'audio.wav' in (result / 'review.html').read_text()
+    assert '猫の声か' in (result / 'review.md').read_text()
     assert len(result_data['audio_rms_by_second']) >= 2
     assert result_data['audio_rms_by_second'][0]['rms'] > 0
     assert '猫の声や意図の判定ではありません' in result_data['notice']

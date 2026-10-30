@@ -19,6 +19,10 @@ from ..web import filtered, render
 
 router = APIRouter()
 
+@router.get('/guide/observe')
+def observation_guide(request: Request):
+    return render(request, 'observation_guide.html')
+
 @router.get('/')
 def home(request: Request):
     with transaction() as db:

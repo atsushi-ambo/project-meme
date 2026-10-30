@@ -1,6 +1,7 @@
 {% extends 'base.html' %}{% from 'macros.html' import token %}{% block content %}<h1>{{ '声・行動' if kind=='observation' else '体調' }}を{{ '編集' if id else '記録' }}</h1><p class="muted">出来事の日時は日本時間。添付は本文の保存後に追加できます。</p>
 {% if errors %}<div class="error" role="alert"><strong>入力を確認してください。まだ保存されていません。</strong>{% for e in errors %}<p>{{ e }}</p>{% endfor %}{% if id %}<a href="/entries/{{ kind }}/{{ id }}" target="_blank" rel="noopener">保存済みの記録を確認</a>{% endif %}</div>{% endif %}
 {% if kind=='health' and not id %}<nav aria-label="よく使う健康記録"><a href="/entries/health/new?event_type=food">食事を記録</a> · <a href="/entries/health/new?event_type=toilet">トイレを記録</a></nav>{% endif %}
+{% if kind=='observation' %}<p><a href="/guide/observe">動画がない日も：声・行動の残し方</a></p>{% endif %}
 <form class="card" method="post" action="/entries/{{ kind }}{{ '/' ~ id if id else '' }}/save">{{ token(csrf) }}<input type="hidden" name="submission_key" value="{{ values.submission_key }}">
 {% if id and kind=='observation' %}<input type="hidden" name="expected_revision" value="{{ values.expected_revision }}">{% endif %}
 <label>出来事の日時<input type="datetime-local" name="occurred_at" required value="{% if values.occurred_at is string %}{{ values.occurred_at }}{% elif values.occurred_at %}{{ values.occurred_at|inputtime }}{% else %}{{ now|inputtime }}{% endif %}"></label>
