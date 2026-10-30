@@ -59,3 +59,18 @@ def test_review_keeps_model_candidates_distinct_from_loudness(tmp_path):
     html = (tmp_path / 'review.html').read_text(encoding='utf-8')
     assert 'モデル候補 1' in html and '&lt;script&gt;種類&lt;/script&gt;' in html
     assert '<script>' not in html and '人の声が混ざっている可能性' in html
+
+
+def test_review_model_state_and_long_interval_are_disclosed(tmp_path):
+    report = {'observation_id': 1, 'media_id': 2, 'original_name': 'test.mov',
+        'duration_seconds': 12, 'memo': '', 'frames': [], 'audio_file': None,
+        'loud_candidates': [], 'saved_segments': [], 'cat_detector': {'available': False},
+        'cat_candidates': [{'start': 0, 'end': 13}]}
+    MODULE['write_review'](tmp_path, report)
+    html = (tmp_path / 'review.html').read_text(encoding='utf-8')
+    assert 'モデル候補 1' not in html and 'この資料では実行されていません' in html
+    report['cat_detector']['available'] = True
+    MODULE['write_review'](tmp_path, report)
+    html = (tmp_path / 'review.html').read_text(encoding='utf-8')
+    assert 'モデル候補 1：0〜12秒' in html
+    assert '表示は動画の終わりまで' in html and '10秒を超える' in html

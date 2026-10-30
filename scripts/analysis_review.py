@@ -27,6 +27,7 @@ def pictures(names, output):
 def write_review(output, report):
     """候補は確認待ちのままにし、投稿用の下書きや分類は作らない。"""
     text = lambda value: escape(str(value), quote=True)
+    seconds = lambda value: f'{value:.3f}'.rstrip('0').rstrip('.')
     if any(type(report.get(key)) is not int or not 1 <= report[key] <= 9223372036854775807
            for key in ('observation_id', 'media_id')):
         raise ValueError('資料の記録IDを確認できません。')
@@ -55,6 +56,8 @@ def write_review(output, report):
     if not isinstance(omitted, dict):
         raise ValueError('関連情報の省略を確認できません。')
     omissions = [(key, count) for key, count in omitted.items() if type(count) is int and count > 0]
+    if ('source_omitted' not in report or any(type(n) is not int or n < 0 for n in omitted.values())):
+        rows.append('<p class="notice">関連情報の省略の有無が不明です。元の記録も確認してください。</p>')
     if omissions:
         rows.append('<p class="notice">元の比較資料では関連情報の省略があります。'
                     '保存済み区間の一覧などが全件とは限りません。元の記録で確認してください。<br>'
@@ -68,21 +71,29 @@ def write_review(output, report):
     rows.append('<h2>3. 猫の声らしい候補を確認する</h2>'
                 '<p>一般的な猫の声の特徴を使うモデルの候補です。メメの声か、意味や意図は確定していません。</p>')
     detector = report.get('cat_detector') or {}
+    if not isinstance(detector, dict):
+        raise ValueError('猫の声の候補の実行状態を確認できません。')
     if detector.get('available') is not True:
         rows.append('<p>' + text(detector.get('notice') or '猫の声のモデルは、この資料では実行されていません。') + '</p>')
     elif not report.get('cat_candidates'):
         rows.append('<p>モデルによる候補はありません。鳴いていなかったという意味ではありません。</p>')
-    for index, span in enumerate(report.get('cat_candidates', []), 1):
+    cat_spans = (report.get('cat_candidates') or []) if detector.get('available') is True else []
+    for index, span in enumerate(cat_spans, 1):
         start, end = span.get('start'), span.get('end')
         if (type(start) not in (int, float) or type(end) not in (int, float)
                 or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < min(end, duration)):
             rows.append(f'<p>モデル候補 {index}は区間を確認できず表示していません。</p>')
             continue
+        trimmed = end > duration
         end = min(end, duration)
-        rows.append(f'<section><h3>モデル候補 {index}：{start:g}〜{end:g}秒 · 未確認</h3>'
+        rows.append(f'<section><h3>モデル候補 {index}：{seconds(start)}〜{seconds(end)}秒 · 未確認</h3>'
                     f'<p>モデルが挙げた種類：{text(span.get("kind_label") or "不明")}</p>')
+        if trimmed:
+            rows.append('<p>音声と動画の長さが異なるため、表示は動画の終わりまでです。</p>')
+        if end - start > 10:
+            rows.append('<p>10秒を超えるため、登録する場合は確認した声の区間を分けて選んでください。</p>')
         if has_audio:
-            rows.append(f'<audio controls preload="none" src="audio.wav#t={start:g},{end:g}"></audio>')
+            rows.append(f'<audio controls preload="none" src="audio.wav#t={seconds(start)},{seconds(end)}"></audio>')
         if span.get('speech'):
             rows.append('<p>人の声が混ざっている可能性もあります。</p>')
         rows.append(pictures(span.get('frames', []), output) + '</section>')
@@ -97,17 +108,19 @@ def write_review(output, report):
             continue
         trimmed = end > duration
         end = min(end, duration)
-        rows.append(f'<section><h3>候補 {index}：{start:g}〜{end:g}秒 · 未確認</h3>')
+        rows.append(f'<section><h3>候補 {index}：{seconds(start)}〜{seconds(end)}秒 · 未確認</h3>')
         if trimmed:
             rows.append('<p>音声と動画の長さが異なるため、表示は動画の終わりまでです。</p>')
         if end - start > 10:
             rows.append('<p>10秒を超えるため、登録する場合は確認した声の区間を分けて選んでください。</p>')
         if has_audio:
-            rows.append(f'<audio controls preload="none" src="audio.wav#t={start:g},{end:g}"></audio>')
+            rows.append(f'<audio controls preload="none" src="audio.wav#t={seconds(start)},{seconds(end)}"></audio>')
         rows.append(pictures(span.get('frames', []), output) + '</section>')
     if skipped:
         rows.append(f'<p>候補 {skipped}件は、区間を確認できず表示していません。</p>')
-    if not report.get('loud_candidates'):
+    if 'loud_candidates' not in report:
+        rows.append('<p>大きい音の候補は未取得です。</p>')
+    elif not report.get('loud_candidates'):
         rows.append('<p>候補はありません。声や行動がなかったという意味ではありません。</p>')
     rows.append(f'<h2>保存済みの区間：取得できたもの {len(report.get("saved_segments", []))}件</h2>'
                 '<p>飼い主が登録した区間とメモです。今回の計算候補とは別で、意味の正解ではありません。'
