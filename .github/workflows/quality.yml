@@ -48,6 +48,7 @@ jobs:
       BASE_URL: http://localhost:8000
       JOB_INTERVAL: '3600'
       MEME_TEST_MODE: '1'
+      SOUND_MODEL_PATH: /tmp/meme-yamnet.tflite
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,6 +60,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg postgresql-client
           python -m pip install --no-cache-dir -r requirements.txt coverage==7.15.4
+          python scripts/fetch_sound_model.py /tmp/meme-yamnet.tflite
       - name: Alias the DB host the migration tests hardcode (db:5432)
         run: echo "127.0.0.1 db" | sudo tee -a /etc/hosts
       - name: Prepare app database role (same grants as scripts/init-db.sh)

@@ -194,6 +194,7 @@ for (const picker of document.querySelectorAll('.sound-picker')) {
   const candidates = picker.querySelector('.candidates');
   const duration = Number(picker.dataset.duration);
   let levels = [];
+  let catSpans = [];
   let stopAt = null;
   const seconds = value => Math.round(value * 1000) / 1000;
   function draw() {
@@ -207,6 +208,10 @@ for (const picker of document.querySelectorAll('.sound-picker')) {
     if (start.value && end.value && e > s) {
       context.fillStyle = '#e7ece2';
       context.fillRect(s / 0.1 / levels.length * width, 0, (e - s) / 0.1 / levels.length * width, height);
+    }
+    context.fillStyle = '#f3e3c8';
+    for (const span of catSpans) {
+      context.fillRect(span.start / 0.1 / levels.length * width, 0, (span.end - span.start) / 0.1 / levels.length * width, height);
     }
     context.fillStyle = style.getPropertyValue('--green') || '#355e4b';
     const bar = width / levels.length;
@@ -243,18 +248,32 @@ for (const picker of document.querySelectorAll('.sound-picker')) {
         levels = data.levels;
         canvas.hidden = false;
         candidates.replaceChildren();
-        const note = document.createElement('p');
-        note.className = 'muted';
-        note.textContent = data.candidates.length ?
-          `${data.notice} 押すとその区間を開始・終了に入れます。` : '周りより大きい音の区間は見つかりませんでした。';
-        candidates.append(note);
-        for (const span of data.candidates) {
-          const button = document.createElement('button');
-          button.type = 'button'; button.className = 'secondary';
-          button.dataset.action = 'candidate'; button.dataset.start = span.start; button.dataset.end = span.end;
-          button.textContent = `${span.start.toFixed(1)}〜${span.end.toFixed(1)}秒`;
-          candidates.append(button);
+        catSpans = data.cat_candidates || [];
+        function group(title, text, spans, label) {
+          const heading = document.createElement('p');
+          heading.className = 'candidate-heading';
+          heading.textContent = title;
+          const note = document.createElement('p');
+          note.className = 'muted';
+          note.textContent = text;
+          candidates.append(heading, note);
+          for (const span of spans) {
+            const button = document.createElement('button');
+            button.type = 'button'; button.className = 'secondary';
+            button.dataset.action = 'candidate'; button.dataset.start = span.start; button.dataset.end = span.end;
+            button.textContent = `${span.start.toFixed(1)}〜${span.end.toFixed(1)}秒${label(span)}`;
+            candidates.append(button);
+          }
         }
+        if (data.cat_available) {
+          group('猫の声らしい区間', catSpans.length ? `${data.cat_notice} 押すとその区間を開始・終了に入れます。` :
+            '猫の声らしい区間は見つかりませんでした。下の音量の候補も確認してください。', catSpans,
+            span => ` ${span.kind_label}（猫らしさ ${span.strength === 'high' ? '高' : '中'}${span.speech ? '・人の声あり' : ''}）`);
+        } else {
+          group('猫の声らしい区間', data.cat_notice, [], () => '');
+        }
+        group('音が大きい場所', data.candidates.length ? data.notice : '周りより大きい音の区間は見つかりませんでした。',
+          data.candidates, () => '');
         status.textContent = data.truncated ? '最初の3分だけを表示しています。' : '';
         draw();
       } catch (error) {

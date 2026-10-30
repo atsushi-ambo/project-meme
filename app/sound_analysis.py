@@ -9,7 +9,7 @@ import subprocess
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select, text
-from . import acoustics
+from . import acoustics, sound_events
 from .analysis import technical_summary
 from .media import paths
 from .models import CallType, Cat, Media, SoundAnalysis, SoundBehavior, now
@@ -212,7 +212,9 @@ def media_loudness(db, observation_id, media_id):
     except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
         raise HTTPException(422, '音声を読み取れませんでした。')
     levels = acoustics.loudness(values)
+    cats = sound_events.detect(values)
     return {'media_id': media.id, 'step_seconds': 0.1, 'levels': levels,
             'candidates': acoustics.loud_spans(levels),
+            'cat_candidates': cats['spans'], 'cat_available': cats['available'], 'cat_notice': cats['notice'],
             'truncated': info['duration_seconds'] > LOUDNESS_SECONDS,
             'notice': '周りより大きい音の区間です。鳴き声かどうかは判定していません。'}

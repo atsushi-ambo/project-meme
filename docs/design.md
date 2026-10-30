@@ -443,3 +443,13 @@ update.pyはテスト・Python依存監査・候補アプリのOS監査・更新
 - 比較の相手は実記録（サンプル・削除中を除く）の、かたちを測った新しい2000区間。詳細画面では一覧を一度だけ読み、区間ごとに上位5件を計算する。
 - 参考の件数は「近い」（distance < 3）以内だけを数え、確率・正解にしない。種類・予想は自動で付けない。
 - 声の地図は長さ×高さ（対数）の散布図。色の見分けの検証済み範囲（散布図は3色）に合わせて多い3種類だけを色と形で分け、残りは灰色の「その他・未選択」。点にはホバーの説明と記録へのリンクを付ける。
+
+## 猫の声らしい区間・声のグループ・AIの下書き（2026-10-30）
+
+- YAMNet（MediaPipeのfloat32 tflite、4.1MB、SHA-256 `4d8b4a53…4faf`）を`ai-edge-litert`で動かす。0.975秒の窓を約0.49秒ずつずらし、Cat・Meow・Purr・Hiss・Caterwaulの最大値を猫らしさとする。0.3以上が続く窓をまとめ、0.1秒ごとの音量で前後の静かな部分を詰める。種類は窓の平均が最大のもの（0.1未満なら「猫の声」）。強さは0.7以上で高。Speechが0.3以上なら「人の声あり」。保存はせず、POSTの区間選び補助と分析資料でだけ使う。ESC-50の猫3件・犬1件・笑い声1件で、猫は全件「ニャー」、ほかは候補なしを手元で確認した（データセットはリポジトリに入れない）。
+- 依存（ai-edge-litert、numpy、ml_dtypes、protobuf、flatbuffers、tqdm、backports.strenum）をハッシュ付きでlockに追加した。モデルはDockerビルドとQuality CIで取得・照合する。分析用のコンテナでは`--network=none`のまま`python -m app.sound_events`を実行する。
+- 声のグループは、新しい300区間を総当たりで比べ、距離2未満（「近い」より狭い）でまとめる。山型の声と下がる声が「近い」同士で混ざったため狭くした。高さと長さの差だけで「近い」を超える組はDTWを省く。近い相手が多い区間を中心に、未所属で中心と近い区間を集める（連鎖を避けるリーダー法）。まとめての種類付けは種類未選択の区間だけに行い、一度に30件まで。新しい名前もその場で作れる。
+- `scripts/ai_review.py`は、渡すファイルだけを`ai-input`へ複製し、CLIをそのフォルダで動かす。
+  - Claudeは`-p --tools Read,Glob --allowedTools Read(./**) Glob(./**) --permission-mode dontAsk --strict-mcp-config`で動かし、対応する版では`--restricted --no-session-persistence`も付ける。
+  - Codexは`exec --sandbox read-only --skip-git-repo-check -C ai-input -i 画像…`で動かす。
+  - 失敗・中止のときは何も保存しない。`ai-input`は必ず消す。AGENTS.mdの「AIへの自動送信を追加しない」は、飼い主の了承を得て、このCLIだけを例外とした。
