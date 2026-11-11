@@ -166,3 +166,64 @@ def test_worker_marks_codex_limited_only_for_real_limits(monkeypatch):
     assert calls == []
     mark('codex は使えませんでした: codex が失敗しました（使用量の上限やログインを確認してください）: You hit your usage limit')
     assert len(calls) == 1
+
+
+def test_images_cover_the_whole_video_not_only_the_start(module):
+    mod, base = module
+    path = base / 'observation-1-media-3-long'
+    path.mkdir()
+    (path / 'report.json').write_text('{}')
+    for second in range(11):
+        (path / f'frame-{second:03d}.jpg').write_text('x')
+    for index in range(37):
+        (path / f'near-{index * 0.25:06.2f}s.jpg').write_text('x')
+    names = [p.name for p in mod['selected_files'](path) if p.suffix == '.jpg']
+    assert len(names) == mod['IMAGE_LIMIT'] == len(set(names))
+    assert {f'frame-{s:03d}.jpg' for s in range(11)} <= set(names)
+    near = [n for n in names if n.startswith('near-')]
+    assert near[0] == 'near-000.00s.jpg' and near[-1] == 'near-009.00s.jpg'
+
+
+def test_spread_keeps_ends_and_order(module):
+    mod, _ = module
+    spread = mod['spread']
+    assert spread(list(range(10)), 4) == [0, 3, 6, 9]
+    assert spread([1, 2], 5) == [1, 2] and spread([1, 2, 3], 1) == [1] and spread([1], 0) == []
+    many = spread(list(range(120)), 20)
+    assert len(set(many)) == 20 and many == sorted(many)
+
+
+@pytest.mark.parametrize('frames, near, expect_frames, expect_near', [
+    (11, 0, 11, 0), (60, 0, 40, 0), (0, 37, 0, 37), (0, 120, 0, 40), (60, 120, 20, 20), (5, 10, 5, 10)])
+def test_image_budget_edge_cases(module, frames, near, expect_frames, expect_near):
+    mod, base = module
+    path = base / f'observation-1-media-{frames}-{near}'
+    path.mkdir()
+    (path / 'report.json').write_text('{}')
+    for second in range(frames):
+        (path / f'frame-{second:03d}.jpg').write_text('x')
+    for index in range(near):
+        (path / f'near-{index * 0.25:06.2f}s.jpg').write_text('x')
+    names = [p.name for p in mod['selected_files'](path)]
+    assert sum(n.startswith('frame-') for n in names) == expect_frames
+    assert sum(n.startswith('near-') for n in names) == expect_near
+    if frames:
+        assert f'frame-{frames - 1:03d}.jpg' in names
+
+
+def test_ollama_mixes_frames_and_candidates_in_time_order(module):
+    mod, base = module
+    path = base / 'observation-1-media-9-ollama'
+    path.mkdir()
+    (path / 'report.json').write_text('{}')
+    for second in range(11):
+        (path / f'frame-{second:03d}.jpg').write_text('x')
+    for index in range(37):
+        (path / f'near-{index * 0.25:06.2f}s.jpg').write_text('x')
+    mod['generate'](path, 'ollama', connect=FakeOllama)
+    content = FakeOllama.sent[2]['messages'][0]['content']
+    listed = content.split('添付した静止画は順に ', 1)[1].split(' です。', 1)[0].split(', ')
+    assert len(listed) == 8 and sum(n.startswith('frame-') for n in listed) == 4
+    assert 'frame-010.jpg' in listed
+    seconds = [float(n.split('-', 1)[1][:-4].rstrip('s')) for n in listed]
+    assert seconds == sorted(seconds)
