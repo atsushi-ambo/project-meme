@@ -213,3 +213,31 @@ class SoundBehavior(Base):
     __tablename__ = 'sound_behaviors'
     sound_analysis_id = Column(ForeignKey('sound_analyses.id', ondelete='CASCADE'), primary_key=True)
     behavior = Column(String(20), primary_key=True)
+
+
+class AiJob(Base):
+    """動画の分析をホストのAIワーカーに頼む予定と、その下書き。記録そのものは変更しない。"""
+    __tablename__ = 'ai_jobs'
+    id = Column(BigInteger, primary_key=True)
+    media_id = Column(ForeignKey('media.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default='queued')
+    trigger = Column(String(20), nullable=False, default='manual')
+    attempts = Column(Integer, nullable=False, default=0)
+    lease = Column(String(64))
+    claimed_at = Column(DateTime(timezone=True))
+    tool = Column(String(40))
+    images_sent = Column(Integer)
+    result = Column(Text)
+    error = Column(String(500))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now)
+    finished_at = Column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','done','failed')", name='ai_job_status'),
+        CheckConstraint("trigger IN ('manual','auto')", name='ai_job_trigger'),
+        CheckConstraint('attempts BETWEEN 0 AND 10', name='ai_job_attempts'),
+        CheckConstraint('result IS NULL OR length(result) <= 20000', name='ai_job_result_size'),
+        CheckConstraint("status <> 'done' OR (result IS NOT NULL AND tool IS NOT NULL)", name='ai_job_done'),
+        # 同じ添付で待機中・実行中のジョブは一件だけ。
+        Index('ux_ai_jobs_active', 'media_id', unique=True,
+              postgresql_where="status IN ('queued','running')"),
+    )

@@ -9,6 +9,8 @@ x-app: &app
     MAX_FILE_BYTES: ${MAX_FILE_BYTES:-1000000000}
     MAX_TOTAL_BYTES: ${MAX_TOTAL_BYTES:-30000000000}
     RETENTION_DAYS: ${RETENTION_DAYS:-60}
+    AI_AUTO_ANALYZE: ${AI_AUTO_ANALYZE:-false}
+    AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-20}
     BASE_URL: http://localhost:${PORT:-8000}
   volumes:
     - ${MEDIA_DIR:?Run scripts/setup.py}:/media

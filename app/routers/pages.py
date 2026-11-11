@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import func, select
+from ..ai_jobs import eligible as ai_eligible, latest_by_media
 from ..analysis import build_comparison, technical_summary
 from ..db import transaction
 from ..exports import health_csv
@@ -115,6 +116,8 @@ def detail(request: Request, kind: str, id: RecordId):
                 interactions=list(db.scalars(select(Interaction).where(Interaction.observation_id==id).order_by(Interaction.id))),
                 evidence=list(db.execute(select(Evidence,DictionaryItem).join(DictionaryItem).where(Evidence.observation_id==id))),
                 sound_results=sound_results,
+                ai_jobs=latest_by_media(db, [m.id for m in media]),
+                ai_eligible={m.id for m in media if ai_eligible(m)},
                 matches=matches_for(db, [result for result, _, _ in sound_results]) if not row.is_sample else {},
                 items=items, call_types=call_types,
                 call_type_names={t.id: t.name for t in call_types},

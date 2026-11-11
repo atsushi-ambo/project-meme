@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import delete, select
+from ..ai_jobs import enqueue as enqueue_ai
 from ..db import transaction
 from ..media import request_delete
 from ..models import CallType, Cat, Comment, DictionaryItem, Evidence, Media, SoundAnalysis, Tag, now
@@ -50,6 +51,21 @@ def sound_draft_choices(raw):
                 ('その予想とこの区間の関係', ASSESSMENTS.get(pick(raw.get('assessment')), 'まだ分からない')),
                 ('そのあとのメメ', OUTCOMES.get(pick(raw.get('outcome')), '未入力'))]
     return choices
+
+
+@router.post('/observations/{id}/ai/{media_id}')
+async def ai_analyse(request: Request, id: RecordId, media_id: RecordId):
+    """ホストのAIワーカーへ分析を頼む。記録は変更しない。"""
+    await read_form(request)
+    def process():
+        with transaction() as db:
+            parent(db, 'observation', id)
+            media = db.get(Media, media_id, with_for_update=True)
+            if media is None or media.observation_id != id:
+                raise HTTPException(404, '添付が見つかりません。')
+            enqueue_ai(db, media, 'manual')
+        return RedirectResponse(f'/entries/observation/{id}#ai-drafts', 303)
+    return await anyio.to_thread.run_sync(process)
 
 
 @router.post('/observations/{id}/sound/{media_id}')

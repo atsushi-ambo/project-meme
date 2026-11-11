@@ -3,6 +3,7 @@ import anyio
 from fastapi import APIRouter, HTTPException, Path as RoutePath, Request
 from pydantic import ValidationError
 from sqlalchemy import select
+from .. import ai_jobs
 from ..analysis import build_comparison
 from ..db import transaction
 from ..media import set_keep
@@ -166,4 +167,24 @@ async def sound_labels_api(request: Request, id: RecordId, result_id: RecordId):
             result = update_labels(db, id, result_id, raw, merge=True)
             db.flush()
             return sound_summary(db, result)
+    return await anyio.to_thread.run_sync(process)
+
+
+@router.post('/api/ai/jobs/claim')
+async def ai_claim_api(request: Request):
+    """ホストのAIワーカーだけが使う。メモ本文は返さず、IDと貸出キーだけを返す。"""
+    ai_jobs.require_worker(request.headers.get('x-meme-worker'))
+    def process():
+        with transaction() as db:
+            return {'job': ai_jobs.claim(db)}
+    return await anyio.to_thread.run_sync(process)
+
+@router.post('/api/ai/jobs/{id}/result')
+async def ai_result_api(request: Request, id: RecordId):
+    ai_jobs.require_worker(request.headers.get('x-meme-worker'))
+    raw = await json_object(request)
+    def process():
+        with transaction() as db:
+            job = ai_jobs.finish(db, id, raw)
+            return {'id': job.id, 'status': job.status}
     return await anyio.to_thread.run_sync(process)
