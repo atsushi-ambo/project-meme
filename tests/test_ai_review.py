@@ -97,3 +97,72 @@ def test_declining_sends_nothing_and_failures_save_nothing(module):
     with pytest.raises(ValueError, match='使用量の上限'):
         mod['run_review'](path, 'codex', confirm=lambda _: 'y', runner=failing, out=lambda *_: None)
     assert not list(path.glob('ai-review-*')) and not (path / 'ai-input').exists()
+
+
+class FakeOllama:
+    sent = None
+
+    def __init__(self, host, port, timeout):
+        assert host == '127.0.0.1'
+
+    def request(self, method, path, body, headers):
+        FakeOllama.sent = (method, path, __import__('json').loads(body))
+
+    def getresponse(self):
+        import io, json
+        class Response(io.BytesIO):
+            status = 200
+        return Response(json.dumps({'message': {'content': '# 動画の観察下書き\nローカル'}}).encode())
+
+    def close(self):
+        pass
+
+
+def test_ollama_is_local_and_gets_report_and_few_images(module):
+    mod, base = module
+    path = bundle(base)
+    text, images = mod['generate'](path, 'ollama', connect=FakeOllama)
+    method, url, body = FakeOllama.sent
+    assert (method, url) == ('POST', '/api/chat') and text.endswith('ローカル') and images == 2
+    assert len(body['messages'][0]['images']) == 2 and 'report.json' in body['messages'][0]['content']
+    assert not (path / 'ai-input').exists()
+
+
+def test_generate_any_falls_through_to_next_tool(module):
+    mod, base = module
+    path = bundle(base)
+    failing = Runner(stdout='', returncode=1)
+    logs = []
+    tool, text, images = mod['generate_any'](path, ['codex', 'ollama'], runner=failing,
+                                             connect=FakeOllama, log=logs.append)
+    assert tool == 'ollama' and 'usage limit' in logs[0]
+    with pytest.raises(ValueError, match='codex'):
+        mod['generate_any'](path, ['codex'], runner=failing, log=logs.append)
+
+
+def test_ollama_unexpected_reply_is_an_error(module):
+    mod, base = module
+
+    class Odd(FakeOllama):
+        def getresponse(self):
+            import io
+            class Response(io.BytesIO):
+                status = 200
+            return Response(b'[1, 2]')
+    with pytest.raises(ValueError, match='Ollama'):
+        mod['generate'](bundle(base), 'ollama', connect=Odd)
+
+
+def test_worker_marks_codex_limited_only_for_real_limits(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(root / 'scripts'))
+    worker = runpy.run_path(str(root / 'scripts/ai_worker.py'))
+    calls = []
+    monkeypatch.setitem(worker['mark_codex_limited'].__globals__, 'subprocess',
+                        type('S', (), {'DEVNULL': -3, 'run': staticmethod(lambda *a, **k: calls.append(a))}))
+    monkeypatch.setattr('shutil.which', lambda tool: '/usr/bin/' + tool)
+    mark = worker['mark_codex_limited']
+    mark('codex は使えませんでした: codex が失敗しました（使用量の上限やログインを確認してください）: not logged in')
+    assert calls == []
+    mark('codex は使えませんでした: codex が失敗しました（使用量の上限やログインを確認してください）: You hit your usage limit')
+    assert len(calls) == 1

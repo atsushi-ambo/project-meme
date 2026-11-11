@@ -26,6 +26,7 @@ class LocalClient:
         self.origin = f'http://localhost:{port}'
         self.cookie = ''
         self.token = ''
+        self.extra_headers = {}
         page = self.request('GET', '/', json_body=False)
         parser = TokenParser()
         parser.feed(page)
@@ -36,7 +37,7 @@ class LocalClient:
     def request(self, method, path, body=None, *, size=None, json_body=True):
         # ホスト・リダイレクト・プロキシを外部へ切り替えられないローカル専用通信。
         headers = {'Host': f'localhost:{self.port}', 'Origin': self.origin,
-                   'Cookie': self.cookie, 'X-CSRF-Token': self.token}
+                   'Cookie': self.cookie, 'X-CSRF-Token': self.token, **self.extra_headers}
         if json_body and body is not None and size is None:
             body = json.dumps(body, ensure_ascii=False).encode()
             headers['Content-Type'] = 'application/json'

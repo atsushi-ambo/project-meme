@@ -1,5 +1,6 @@
 """ファイルとDBの二段階保存、期限削除。実ファイル名はランダムキーだけ。"""
 import json
+import logging
 import os
 import re
 import shutil
@@ -212,6 +213,15 @@ class Upload:
         self.row.status = 'ready'
         self.row.retention_started_at = now()
         self.row.expires_at = now() + timedelta(days=settings.retention_days)
+        if settings.ai_auto_analyze:
+            from .ai_jobs import enqueue
+            self.db.flush()
+            # 補助の分析予約に失敗しても、動画の保存は完了させる。
+            try:
+                with self.db.begin_nested():
+                    enqueue(self.db, self.row, 'auto')
+            except Exception:
+                logging.getLogger(__name__).warning('ai_auto_enqueue_failed', exc_info=True)
         self.context.__exit__(None, None, None)
 
     def abort(self, exc):
@@ -271,6 +281,8 @@ def run_jobs(at=None):
                 row.last_error_code = 'file_delete_failed'
                 row.next_retry_at = at + timedelta(seconds=min(3600, 30 * 2 ** min(row.retry_count, 7)))
         db.flush()
+        from .ai_jobs import forget_unavailable
+        forget_unavailable(db)
         for model, field in ((Observation, Media.observation_id), (Health, Media.health_entry_id)):
             for entry in db.scalars(select(model).where(model.deletion_requested_at.is_not(None))):
                 children = list(db.scalars(select(Media).where(field == entry.id)))
