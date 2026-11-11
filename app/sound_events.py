@@ -1,4 +1,4 @@
-"""YAMNet（GoogleのAudioSet 521種類の音の分類）で、猫の声らしい区間を探す。
+"""YAMNet（GoogleのAudioSet 521種類の音の分類）で、猫の声らしい区間と人の声らしい区間を分けて探す。
 
 ローカルで動き、音声を外部へ送らない。分類は一般的な猫の声の特徴によるもので、
 メメの声か、何を伝えているかは判定しない。結果は区間選びの候補として扱う。
@@ -18,6 +18,14 @@ HOP = WINDOW // 2              # 約0.49秒ずつずらす
 CAT_KINDS = {'Meow': 'ニャー', 'Purr': 'ゴロゴロ', 'Hiss': 'シャー', 'Caterwaul': 'うなり・叫び'}
 CAT_LABELS = ('Cat', *CAT_KINDS)
 THRESHOLD = 0.3
+# 人の声と重なると猫の声の強さが下がるため、弱い候補も別に示す（確認用）。
+WEAK_THRESHOLD = 0.1
+# 人の声（話し声・呼びかけ・叫び・ささやき）。笑い声や泣き声は含めない。
+# 猫の叫びと混同しやすい Bellow・Whoop・Babbling は含めない。
+HUMAN_LABELS = ('Speech', 'Child speech, kid speaking', 'Conversation', 'Narration, monologue',
+                'Speech synthesizer', 'Shout', 'Yell', 'Children shouting', 'Whispering')
+WEAK_LIMIT = 5
+HUMAN_THRESHOLD = 0.3
 NOTICE = ('YAMNetが一般的な猫の声の特徴から見つけた候補です。メメの声か、何を伝えているかは判定していません。'
           '近くの人の声やテレビの音も混ざることがあります。')
 
@@ -63,7 +71,8 @@ def window_scores(values, path=None):
     if model is None:
         return None
     labels = model['labels']
-    index = {name: labels.index(name) for name in (*CAT_LABELS, 'Speech')}
+    index = {name: labels.index(name) for name in (*CAT_LABELS, *HUMAN_LABELS) if name in labels}
+    human = [index[name] for name in HUMAN_LABELS if name in index]
     samples = np.asarray(values, dtype=np.float32)
     if len(samples) < WINDOW:
         samples = np.pad(samples, (0, WINDOW - len(samples)))
@@ -77,7 +86,8 @@ def window_scores(values, path=None):
             kinds = {name: round(float(scores[index[name]]), 3) for name in CAT_KINDS}
             rows.append({'start': round(start / RATE, 3),
                          'cat': round(max(float(scores[index[name]]) for name in CAT_LABELS), 3),
-                         'kinds': kinds, 'speech': round(float(scores[index['Speech']]), 3)})
+                         'kinds': kinds, 'speech': round(float(scores[index['Speech']]), 3),
+                         'human': round(max(float(scores[i]) for i in human), 3)})
     return rows
 
 
@@ -110,13 +120,61 @@ def spans(rows, levels, threshold=THRESHOLD):
     return found
 
 
+def trimmed(current, levels):
+    """窓の並びを、0.1秒ごとの音量で前後の静かな部分を詰めた区間にする。"""
+    start, end = current[0]['start'], current[-1]['start'] + WINDOW / RATE
+    first, last = int(start * 10), min(int(end * 10) + 1, len(levels))
+    inside = levels[first:last]
+    if inside and max(inside) > 0:
+        floor = max(inside) * 0.15
+        loud = [i for i, level in enumerate(inside) if level >= floor]
+        start, end = (first + loud[0]) / 10, (first + loud[-1] + 1) / 10
+    return round(start, 1), round(end, 1)
+
+
+def human_spans(rows, levels, threshold=HUMAN_THRESHOLD):
+    """人の声らしさが続く区間。飼い主の呼びかけなどを猫の声と分けるための候補で、誰の声かは判定しない。"""
+    found, current = [], []
+    for row in rows + [None]:
+        # 猫らしさの方が強い窓は、叫び声などの猫の声の可能性があるため人の声に数えない。
+        if row is not None and row.get('human', 0) >= threshold and row.get('human', 0) > row['cat']:
+            current.append(row)
+            continue
+        if current:
+            start, end = trimmed(current, levels)
+            peak = max(row['human'] for row in current)
+            found.append({'start': start, 'end': end, 'peak': round(peak, 2),
+                          'strength': 'high' if peak >= 0.7 else 'mid',
+                          'cat_peak': round(max(row['cat'] for row in current), 2)})
+            current = []
+    return found
+
+
+def weak_spans(rows, levels):
+    """通常の候補にならない弱い猫らしさ（0.1〜0.3）。人の声と重なった鳴き声の確認用。"""
+    # 通常の候補（0.3以上）の窓は除き、その前後の弱い部分も別に見えるようにする。
+    masked = [row if row['cat'] < THRESHOLD else dict(row, cat=0.0) for row in rows]
+    found = [dict(span, strength='low') for span in spans(masked, levels, WEAK_THRESHOLD)]
+    strongest = sorted(found, key=lambda span: span['peak'], reverse=True)[:WEAK_LIMIT]
+    return sorted(strongest, key=lambda span: span['start'])
+
+
+def timeline(rows):
+    """約0.49秒ごとの猫らしさと人の声らしさ（0〜1）。"""
+    return [{'start': row['start'], 'cat': round(row['cat'], 2), 'human': round(row.get('human', 0), 2)}
+            for row in rows]
+
+
 def detect(values, *, path=None):
-    """音声全体から猫の声らしい区間。モデルがなければavailable=False。"""
+    """音声全体から猫の声らしい区間と人の声らしい区間。モデルがなければavailable=False。"""
     rows = window_scores(values, path)
     if rows is None:
         return {'available': False, 'spans': [], 'notice': '猫の声の判定モデルがありません。音量の候補を使ってください。'}
-    return {'available': True, 'spans': spans(rows, loudness(values)), 'notice': NOTICE,
-            'model': 'YAMNet (AudioSet)', 'windows': len(rows)}
+    levels = loudness(values)
+    return {'available': True, 'spans': spans(rows, levels), 'notice': NOTICE,
+            'model': 'YAMNet (AudioSet)', 'windows': len(rows),
+            'weak_spans': weak_spans(rows, levels), 'human_spans': human_spans(rows, levels),
+            'timeline': timeline(rows)}
 
 
 def main():

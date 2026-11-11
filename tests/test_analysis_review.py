@@ -74,3 +74,17 @@ def test_review_model_state_and_long_interval_are_disclosed(tmp_path):
     html = (tmp_path / 'review.html').read_text(encoding='utf-8')
     assert 'モデル候補 1：0〜12秒' in html
     assert '表示は動画の終わりまで' in html and '10秒を超える' in html
+
+
+def test_review_lists_human_voice_and_weak_cat_candidates_separately(tmp_path):
+    (tmp_path / 'audio.wav').write_bytes(b'test')
+    MODULE['write_review'](tmp_path, {'observation_id': 1, 'media_id': 2, 'original_name': 'test.mov',
+        'duration_seconds': 5, 'memo': '', 'frames': [], 'audio_file': 'audio.wav',
+        'loud_candidates': [{'start': 1, 'end': 2, 'cat_score': 0.12, 'human_score': 0.81}],
+        'saved_segments': [], 'cat_detector': {'available': True}, 'cat_candidates': [],
+        'weak_cat_candidates': [{'start': 3, 'end': 3.5}],
+        'human_voice_candidates': [{'start': 0.5, 'end': 2}, {'start': float('nan'), 'end': 1}]})
+    html = (tmp_path / 'review.html').read_text(encoding='utf-8')
+    assert '弱い猫らしさの候補 1：3〜3.5秒' in html and '人の声らしい候補 1：0.5〜2秒' in html
+    assert '人の声らしい候補 2' not in html and '付近の猫らしさ 0.12・人の声らしさ 0.81' in html
+    assert '誰の声か・何と言ったかは判定していません' in html

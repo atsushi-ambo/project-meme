@@ -17,8 +17,8 @@ from test_voices import api, saved
 from test_voice_match import chirp_video
 
 
-def row(start, cat, meow=0.0, purr=0.0, speech=0.0):
-    return {'start': start, 'cat': cat, 'speech': speech,
+def row(start, cat, meow=0.0, purr=0.0, speech=0.0, human=None):
+    return {'start': start, 'cat': cat, 'speech': speech, 'human': speech if human is None else human,
             'kinds': {'Meow': meow, 'Purr': purr, 'Hiss': 0.0, 'Caterwaul': 0.0}}
 
 
@@ -34,19 +34,41 @@ def test_spans_merge_windows_trim_silence_and_name_the_kind():
     assert sound_events.spans([row(0.0, 0.2)], [0.1] * 10) == []
 
 
+def test_human_voice_and_weak_cat_spans_are_separate():
+    levels = [0.2] * 40
+    rows = [row(0.0, 0.05, speech=0.8), row(0.4875, 0.05, human=0.6), row(0.975, 0.2, meow=0.15),
+            row(1.4625, 0.25, meow=0.2), row(1.95, 0.02), row(2.4375, 0.9, meow=0.8)]
+    [human] = sound_events.human_spans(rows, levels)
+    assert (human['start'], human['end']) == (0.0, 1.5) and human['strength'] == 'high' and human['cat_peak'] == 0.05
+    [weak] = sound_events.weak_spans(rows, levels)
+    assert weak['strength'] == 'low' and weak['start'] == 0.9 and weak['peak'] == 0.25
+    # 強い窓の直前の弱い窓も、強い区間に飲み込まれず弱い候補として残る。
+    near_strong = [row(0.0, 0.2), row(0.4875, 0.8)]
+    assert [s['peak'] for s in sound_events.weak_spans(near_strong, levels)] == [0.2]
+    # 猫らしさが人の声らしさより強い窓（叫び声など）は人の声に数えない。
+    assert sound_events.human_spans([row(0.0, 0.9, human=0.5)], levels) == []
+    many = [row(i * 0.975, 0.1 + i * 0.02) if i % 2 == 0 else row(i * 0.975, 0.0) for i in range(14)]
+    assert len(sound_events.weak_spans(many, levels * 10)) == sound_events.WEAK_LIMIT
+    [strong] = sound_events.spans(rows, levels)          # 通常の候補は0.3以上だけで、弱い候補と重複しない
+    assert strong['start'] == 2.4
+    assert sound_events.timeline(rows)[0] == {'start': 0.0, 'cat': 0.05, 'human': 0.8}
+
+
 def test_model_checksum_and_labels_are_the_pinned_ones():
     model = sound_events.load()
     if model is None:
         pytest.fail('YAMNetモデルが必要です（scripts/fetch_sound_model.py）。')
     assert len(model['labels']) == 521
     assert {'Cat', 'Meow', 'Purr', 'Hiss', 'Caterwaul', 'Speech'} <= set(model['labels'])
+    assert set(sound_events.HUMAN_LABELS) <= set(model['labels'])
 
 
 def test_pure_tone_and_silence_are_not_cat_voices():
     tone = [0.3 * math.sin(2 * math.pi * 1000 * i / RATE) for i in range(RATE * 2)]
     for values in ([0.0] * RATE * 2, tone):
         result = sound_events.detect(values)
-        assert result['available'] is True and result['spans'] == []
+        assert result['available'] is True and result['spans'] == [] and result['weak_spans'] == []
+        assert result['human_spans'] == [] and len(result['timeline']) == result['windows']
     assert sound_events.detect([0.0] * 100)['windows'] == 1        # 1窓に満たない音も0で埋めて判定する
 
 
