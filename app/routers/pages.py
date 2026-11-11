@@ -15,7 +15,7 @@ from ..schemas import RecordId
 from ..services import LABELS, parent
 from ..voice_match import groups, matches_for
 from ..voices import build_voice_report, label_values
-from ..web import filtered, render
+from ..web import ObservationSearchScope, filtered, render
 
 router = APIRouter()
 
@@ -53,7 +53,9 @@ def voices(request: Request):
 
 @router.get('/compare')
 def comparison(request: Request, ids: str = '', selected: list[RecordId] = Query(default=[]),
-               q: str = '', start: str = '', end: str = '', page: int = 1):
+               q: str = '', start: str = '', end: str = '', page: int = 1,
+               scope: ObservationSearchScope = 'all'):
+    q = q.strip()
     if ids and selected:
         raise HTTPException(422, '比較する記録の指定方法を一つにしてください。')
     if len(selected) > 5:
@@ -66,14 +68,16 @@ def comparison(request: Request, ids: str = '', selected: list[RecordId] = Query
                           ids=','.join(str(value) for value in report['selected_ids']))
         # サンプルと削除中を候補から除き、期間・キーワードで実記録を探せる。
         rows = filtered(db, Observation, q=q, start=start, end=end, page=page,
-                        real_only=True)
+                        real_only=True, scope=scope)
         return render(request, 'compare.html', report=None, rows=rows,
-                      q=q, start=start, end=end, page=page)
+                      q=q, start=start, end=end, page=page, scope=scope)
 
 @router.get('/observations')
 @router.get('/health')
 def listing(request: Request, q: str='', start: str='', end: str='', tag: str='', page: int=1):
     kind = 'health' if request.url.path == '/health' else 'observation'
+    if kind == 'observation':
+        q = q.strip()
     with transaction() as db:
         return render(request, 'list.html', kind=kind, rows=filtered(db, Health if kind=='health' else Observation,q,start,end,tag,page),
             tags=list(db.scalars(select(Tag))), q=q,start=start,end=end,tag=tag,page=page)

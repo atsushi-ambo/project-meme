@@ -185,6 +185,7 @@ def build_comparison(db, ids_string):
             'id': id, 'url': url, 'occurred_at': local_time(row.occurred_at),
             'location': row.location, 'description': row.description, 'revision': row.revision,
             'description_source': 'owner memo', 'tags': tags, 'guesses': guesses,
+            'owner_action': row.owner_action, 'observed_after': row.observed_after,
             'legacy_notes': notes, 'media': media, 'sound_notes': sounds,
             'omitted': {'tags': tag_total - len(tags), 'guesses': guess_total - len(guesses),
                         'comments': legacy_omitted['comment'], 'interactions': legacy_omitted['interaction'],

@@ -485,8 +485,9 @@ def test_one_memo_ui_preserves_legacy_notes(client):
     assert 'name="owner_action"' not in detail and 'name="cat_response"' not in detail
     assert '使った合図' not in detail and 'その後を残す' not in detail
     form=client.get(f'/entries/observation/{id}/edit').text
-    assert form.count('<textarea')==1
-    assert '記入例（保存されません）' in form
+    assert form.count('name="description"') == 1
+    assert '<details id="episode-notes">' in form
+    assert '例：仕事中' in form
     assert 'おもちゃを持ってきた。立つと走っていった。</textarea>' in form
     assert post(client,f'/entries/observation/{id}/save',dict(occurred_at='2026-10-04T12:00',description='まとめたメモ',location='',submission_key=str(uuid.uuid4()),expected_revision=1)).status_code==303
     detail=client.get(f'/entries/observation/{id}').text

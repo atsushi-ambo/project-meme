@@ -1,21 +1,27 @@
-{% extends 'base.html' %}{% from 'macros.html' import media_facts %}
+{% extends 'base.html' %}{% from 'macros.html' import media_facts, episode_notes %}
 {% block content %}
 <div class="section-title"><h1>記録を比べる</h1>{% if report %}<a class="button secondary" href="/compare">選び直す</a>{% endif %}</div>
 {% if not report %}
-<p>似た場面や違う反応の記録を1〜5件選んで、メモと動画を並べて見返せます。</p>
-<form class="card filters" method="get" action="/compare"><label>キーワード<input name="q" value="{{ q }}" maxlength="200"></label><label>開始日<input type="date" name="start" value="{{ start }}"></label><label>終了日<input type="date" name="end" value="{{ end }}"></label><button class="secondary">探す</button></form>
+<p>「猫じゃらし」「名前を呼んだ」などで探して、似た場面の記録を1〜5件選びます。動画がなくても比較できます。</p>
+<form class="card filters" method="get" action="/compare"><label>キーワード<input name="q" value="{{ q }}" maxlength="200"></label><label>探す欄<select name="scope">
+<option value="all"{% if scope=='all' %} selected{% endif %}>すべて</option>
+<option value="memo"{% if scope=='memo' %} selected{% endif %}>本文・コメント</option>
+<option value="action"{% if scope=='action' %} selected{% endif %}>こちらがしたこと</option>
+<option value="after"{% if scope=='after' %} selected{% endif %}>その後に見えたこと</option>
+</select></label><label>開始日<input type="date" name="start" value="{{ start }}"></label><label>終了日<input type="date" name="end" value="{{ end }}"></label><button class="secondary">探す</button></form>
 <form method="get" action="/compare">
 <fieldset class="comparison-options"><legend>比較する記録（1〜5件）</legend>
-{% for row in rows %}<label class="card comparison-choice"><input type="checkbox" name="selected" value="{{ row.id }}"><span><span class="muted">{{ row.occurred_at|localtime }} · {{ row.location or '場所未入力' }}</span><span class="comparison-preview">{{ row.description|truncate(160) }}</span><a href="/entries/observation/{{ row.id }}">記録を開く</a></span></label>{% else %}<p class="muted">この条件の実記録はありません。</p>{% endfor %}
+{% for row in rows %}<label class="card comparison-choice"><input type="checkbox" name="selected" value="{{ row.id }}"><span><span class="muted">{{ row.occurred_at|localtime }} · {{ row.location or '場所未入力' }}</span><span class="comparison-preview">{{ row.description|truncate(160) }}</span>{% if row.owner_action %}<span class="comparison-preview">対応：{{ row.owner_action|truncate(100) }}</span>{% endif %}{% if row.observed_after %}<span class="comparison-preview">その後：{{ row.observed_after|truncate(100) }}</span>{% endif %}<a href="/entries/observation/{{ row.id }}">記録を開く</a></span></label>{% else %}<p class="muted">この条件の実記録はありません。</p>{% endfor %}
 </fieldset>{% if rows %}<button>選んだ記録を比べる</button>{% endif %}</form>
-<div class="actions">{% if page>1 %}<a href="?page={{ page-1 }}&q={{ q|urlencode }}&start={{ start }}&end={{ end }}">← 前へ</a>{% endif %}<span>{{ page }}ページ</span>{% if rows|length==30 %}<a href="?page={{ page+1 }}&q={{ q|urlencode }}&start={{ start }}&end={{ end }}">次へ →</a>{% endif %}</div>
+<div class="actions">{% if page>1 %}<a href="?page={{ page-1 }}&amp;q={{ q|urlencode }}&amp;scope={{ scope }}&amp;start={{ start|urlencode }}&amp;end={{ end|urlencode }}">← 前へ</a>{% endif %}<span>{{ page }}ページ</span>{% if rows|length==30 %}<a href="?page={{ page+1 }}&amp;q={{ q|urlencode }}&amp;scope={{ scope }}&amp;start={{ start|urlencode }}&amp;end={{ end|urlencode }}">次へ →</a>{% endif %}</div>
 {% else %}
-<p>前後の状況・自分がしたこと・メメの反応を見返して、共通する場面と違う例を探してみましょう。分からないことはそのまま残せます。</p>
+<p>似た場面で、こちらの対応やメメのその後が違った例を見比べられます。欄が空いていても、本文に書かれていることがあります。</p>
 <div class="actions"><a class="button secondary" href="/api/analysis/observations?ids={{ ids }}" download="meme-comparison.json">比較資料を保存（JSON）</a><span class="muted">{{ report.observations|length }}件 · メモは全文</span></div>
 <div class="comparison-grid">
 {% for row in report.observations %}<article class="card comparison-record">
 <header><div><p class="eyebrow">{{ row.occurred_at|isotime }}</p><h2><a href="{{ row.url }}">記録 #{{ row.id }}</a></h2><p class="muted">{{ row.location or '場所未入力' }}{% if row.tags %} · {% for tag in row.tags %}{{ tag.name }}{{ ' / ' if not loop.last }}{% endfor %}{% endif %}</p></div></header>
 <section><h3>そのときの様子・前後のメモ</h3><p class="preserve">{{ row.description }}</p></section>
+<section>{{ episode_notes(row) }}</section>
 <section><h3>飼い主の意味の予想</h3>{% for guess in row.guesses %}<div class="comparison-guess"><a href="{{ guess.url }}">{{ guess.title }}</a><span class="pill">{{ guess.assessment_label }}</span>{% if guess.rationale %}<p>{{ guess.rationale }}{% if guess.rationale_truncated %}… <a href="{{ row.url }}">全文を見る</a>{% endif %}</p>{% endif %}</div>{% else %}<p class="muted">予想はまだ選ばれていません。</p>{% endfor %}</section>
 {% if row.sound_notes %}<section><h3>声の区間とメモ</h3><p class="muted">人が選んだ区間です。音が似ているか、意味が同じかは自動判定していません。</p>{% for sound in row.sound_notes %}<div><p>{{ sound.start_seconds }}〜{{ sound.end_seconds }}秒{% if sound.call_type %} · <span class="pill">{{ sound.call_type.name }}</span>{% endif %} · <a href="{{ row.url }}#sound-{{ sound.id }}">元の分析を見る</a></p>{% set f = sound.acoustic_features %}{% if f and f.pitch_hz %}<p class="muted">声の高さ 約{{ f.pitch_hz.median }}Hz · 抑揚：{{ contours.get(f.contour) }}</p>{% endif %}{% if sound.behaviors %}<p>行動：{% for b in sound.behaviors %}{{ b.label }}{{ '、' if not loop.last }}{% endfor %}</p>{% endif %}{% if sound.meaning %}<p>意味の予想：<a href="{{ sound.meaning.url }}">{{ sound.meaning.title }}</a> <span class="pill">{{ sound.meaning.assessment_label }}</span></p>{% endif %}{% if sound.owner_response %}<p>こちらがしたこと：{{ sound.owner_response }}</p>{% endif %}{% if sound.outcome %}<p>そのあと：{{ sound.outcome.label }}</p>{% endif %}{% if sound.observation %}<p>聞こえたこと・見えたこと：{{ sound.observation }}</p>{% endif %}{% if sound.hypothesis %}<p>意味の予想のメモ：{{ sound.hypothesis }}</p>{% endif %}{% if sound.unknown %}<p>分からないこと：{{ sound.unknown }}</p>{% endif %}</div>{% endfor %}</section>{% endif %}
 <section><h3>動画・写真・音声</h3>{% for m in row.media %}<div class="comparison-media"><p>{{ m.original_name }}</p>

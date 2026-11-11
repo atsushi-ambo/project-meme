@@ -30,6 +30,8 @@ class Observation(Timestamps, Base):
     timezone = Column(String(64), nullable=False, default='Asia/Tokyo')
     location = Column(String(200), nullable=False, default='')
     description = Column(Text, nullable=False)
+    owner_action = Column(String(500))
+    observed_after = Column(String(500))
     revision = Column(BigInteger, nullable=False, default=1, server_default='1')
     is_sample = Column(Boolean, nullable=False, default=False, server_default='false')
     submission_key = Column(String(36), nullable=False, unique=True)
