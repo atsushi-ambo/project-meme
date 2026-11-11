@@ -1,6 +1,7 @@
 """画面共通: テンプレート、検索、一覧の絞り込み、フォーム検証、定期ジョブ。"""
 import logging
 from datetime import datetime, timedelta
+from typing import Literal
 from fastapi import HTTPException
 from fastapi.templating import Jinja2Templates
 from pydantic import TypeAdapter
@@ -43,7 +44,11 @@ async def read_form(request):
         raise HTTPException(403, '送信を確認できません。ページを開き直してください。')
     return {key: form.getlist(key) if key in {'tags', 'guesses', 'behaviors', 'sound_ids'} else value for key, value in form.items() if key != 'csrf'}
 
-def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30, real_only=False):
+ObservationSearchScope = Literal['all', 'memo', 'action', 'after']
+
+
+def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30, real_only=False,
+             *, scope: ObservationSearchScope = 'all'):
     query = select(model).where(model.deletion_requested_at.is_(None))
     if real_only and model is Observation:
         query = query.where(Observation.cat_id == 1, Observation.is_sample.is_(False))
@@ -59,8 +64,15 @@ def filtered(db, model, q='', start='', end='', tag='', page=1, limit=30, real_o
     if len(q) > 200: raise HTTPException(422, '検索語が長すぎます。')
     if q:
         if model is Observation:
-            query = query.where(or_(model.description.contains(q, autoescape=True),
-                model.id.in_(select(Comment.observation_id).where(Comment.body.contains(q, autoescape=True)))))
+            matches = []
+            if scope in ('all', 'memo'):
+                matches += [model.description.contains(q, autoescape=True),
+                            model.id.in_(select(Comment.observation_id).where(Comment.body.contains(q, autoescape=True)))]
+            if scope in ('all', 'action'):
+                matches.append(model.owner_action.contains(q, autoescape=True))
+            if scope in ('all', 'after'):
+                matches.append(model.observed_after.contains(q, autoescape=True))
+            query = query.where(or_(*matches))
         else:
             query = query.where(model.details.contains(q, autoescape=True))
     return list(db.scalars(query.order_by(model.occurred_at.desc(), model.id.desc()).offset((page-1)*limit).limit(limit)))

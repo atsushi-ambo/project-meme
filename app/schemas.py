@@ -29,9 +29,18 @@ class ObservationInput(Input):
     occurred_at: datetime
     location: str = Field(default='', max_length=200)
     description: str = Field(min_length=1, max_length=10000)
+    owner_action: str | None = Field(default=None, max_length=500, pattern=r'^[^\x00]*$')
+    observed_after: str | None = Field(default=None, max_length=500, pattern=r'^[^\x00]*$')
     tags: list[RecordId] = Field(default_factory=list, max_length=6)
     submission_key: UUID
     _time = field_validator('occurred_at', mode='before')(parse_time)
+
+    @field_validator('owner_action', 'observed_after', mode='before')
+    @classmethod
+    def empty_episode_note(cls, value):
+        if isinstance(value, str):
+            return value.replace('\r\n', '\n').replace('\r', '\n').strip() or None
+        return value
 
 class HealthInput(Input):
     occurred_at: datetime

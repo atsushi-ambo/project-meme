@@ -7,3 +7,12 @@
 <dt>音声</dt><dd>{% if info.audio %}{{ info.audio.codec|upper }}{% if info.audio.sample_rate %} · {{ info.audio.sample_rate }} Hz{% endif %}{% if info.audio.channels %} · {{ info.audio.channels }} ch{% endif %}{% else %}確認できた音声トラックなし{% endif %}</dd>
 </dl>{% endif %}
 {% endmacro %}
+
+{% macro episode_notes(row) %}
+<div>
+  <h3>こちらがしたこと</h3>
+  {% if row.owner_action %}<p class="preserve">{{ row.owner_action }}</p>{% else %}<p class="muted">欄は未入力</p>{% endif %}
+  <h3>その後に見えたこと</h3>
+  {% if row.observed_after %}<p class="preserve">{{ row.observed_after }}</p>{% else %}<p class="muted">欄は未入力</p>{% endif %}
+</div>
+{% endmacro %}

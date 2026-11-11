@@ -71,6 +71,7 @@ def observation_api(id: RecordId = RoutePath(ge=1, le=9223372036854775807)):
         return {'id': row.id, 'url': f'/entries/observation/{row.id}',
                 'description': row.description, 'revision': row.revision,
                 'occurred_at': row.occurred_at, 'location': row.location,
+                'owner_action': row.owner_action, 'observed_after': row.observed_after,
                 'media': [{'id': item.id, 'original_name': item.original_name, 'keep': item.keep,
                            'expires_at': item.expires_at} for item in media]}
 

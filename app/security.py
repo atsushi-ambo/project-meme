@@ -73,10 +73,14 @@ class SecurityMiddleware:
             if mutation and not token_matches(supplied, token):
                 return await rejection('送信を確認できません。', 403)(scope, receive, send)
         # フォームの日本語・絵文字はURLエンコードで最大12倍になる。
-        # 10000文字の正当なメモを受け付け、JSON/APIの上限は維持する。
+        # 観察の本文・対応・その後・場所が上限まで入力されても送信できるようにする。
         content_type = headers.get(b'content-type', b'').split(b';', 1)[0].strip().lower()
-        form_limit = 131072 if (not scope['path'].startswith('/api/')
-            and content_type == b'application/x-www-form-urlencoded') else 65536
+        form_limit = 65536
+        path = scope['path']
+        if not path.startswith('/api/') and content_type == b'application/x-www-form-urlencoded':
+            form_limit = 131072
+            if path.startswith('/entries/observation/') and path.endswith('/save'):
+                form_limit = 136 * 1024
         maximum = 10_000_000 if scope['path']=='/api/profile-photo' and scope['method']=='PUT' else (settings.max_file_bytes if upload else form_limit)
         seen = 0
         started = False
