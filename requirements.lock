@@ -48,8 +48,8 @@ ml_dtypes==0.6.0 \
 numpy==2.5.4 \
     --hash=sha256:1c2e71b04c6cad90026e544501bbe0ab9290fa8a4d845e7e8c0d124fb429c988 \
     --hash=sha256:6ffa07666f8da0eef81d149934a626d0d95fbd6838432a33e66245423a9062c0
-opentelemetry-api==1.45.1 \
-    --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+opentelemetry-api==1.45.2 \
+    --hash=sha256:2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34
 packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 pillow==13.0.0 \
