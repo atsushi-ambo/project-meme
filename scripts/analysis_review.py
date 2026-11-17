@@ -97,6 +97,25 @@ def write_review(output, report):
         if span.get('speech'):
             rows.append('<p>人の声が混ざっている可能性もあります。</p>')
         rows.append(pictures(span.get('frames', []), output) + '</section>')
+    for key, title, note in [
+            ('weak_cat_candidates', '弱い猫らしさの候補',
+             '猫らしさが弱い（0.1〜0.3）区間です。人の声と重なった鳴き声を見落とさないための確認用で、鳴き声とは限りません。'),
+            ('human_voice_candidates', '人の声らしい候補',
+             '話し声・呼びかけなど人の声らしい区間です。飼い主がメメを呼ぶ声などを猫の声と分けるためのもので、誰の声か・何と言ったかは判定していません。')]:
+        found = report.get(key) or []
+        if not found or detector.get('available') is not True:
+            continue
+        rows.append(f'<h3>{title}</h3><p>{note}</p>')
+        for index, span in enumerate(found, 1):
+            start, end = span.get('start'), span.get('end')
+            if (type(start) not in (int, float) or type(end) not in (int, float)
+                    or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < min(end, duration)):
+                continue
+            end = min(end, duration)
+            rows.append(f'<section><h4>{title} {index}：{seconds(start)}〜{seconds(end)}秒 · 未確認</h4>')
+            if has_audio:
+                rows.append(f'<audio controls preload="none" src="audio.wav#t={seconds(start)},{seconds(end)}"></audio>')
+            rows.append(pictures(span.get('frames', []), output) + '</section>')
     rows.append('<h2>大きい音の候補も確認する</h2><p>これはこの動画内で相対的に大きい音の候補です。'
                 '静かな声を見落とす場合があり、人声や物音も含みます。鳴き声の検出結果ではありません。</p>')
     skipped = 0
@@ -109,6 +128,9 @@ def write_review(output, report):
         trimmed = end > duration
         end = min(end, duration)
         rows.append(f'<section><h3>候補 {index}：{seconds(start)}〜{seconds(end)}秒 · 未確認</h3>')
+        cat, human = span.get('cat_score'), span.get('human_score')
+        if type(cat) in (int, float) and type(human) in (int, float):
+            rows.append(f'<p>付近の猫らしさ {cat:.2f}・人の声らしさ {human:.2f}（0〜1、どちらの声かは確定しません）</p>')
         if trimmed:
             rows.append('<p>音声と動画の長さが異なるため、表示は動画の終わりまでです。</p>')
         if end - start > 10:

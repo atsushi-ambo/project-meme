@@ -79,7 +79,7 @@ def test_synthetic_video_to_private_analysis_bundle(module, tmp_path, monkeypatc
     assert len(result_data['audio_rms_by_second']) >= 2
     assert result_data['audio_rms_by_second'][0]['rms'] > 0
     assert '猫の声や意図の判定ではありません' in result_data['notice']
-    assert result_data['format_version'] == 2 and len(result_data['audio_rms_by_100ms']) == 20
+    assert result_data['format_version'] == 3 and len(result_data['audio_rms_by_100ms']) == 20
     assert result_data['saved_segments'] == []
     assert all(p.stat().st_mode & 0o777 == 0o600 for p in result.iterdir())
     assert not (result / 'source.mov').exists()
@@ -123,4 +123,29 @@ def test_loud_candidates_get_features_and_nearby_frames(module, tmp_path, monkey
     assert len(candidate['frames']) == 11
     assert sorted(p.name for p in result.glob('near-*.jpg')) == candidate['frames']
     assert [s['media_id'] for s in result_data['saved_segments']] == [2]
+    # YAMNetの人の声・弱い猫らしさ・0.5秒ごとの推移も資料に入り、大きい音には両方の強さが付く。
+    assert result_data['format_version'] == 3
+    assert isinstance(result_data['human_voice_candidates'], list) and isinstance(result_data['weak_cat_candidates'], list)
+    assert len(result_data['sound_timeline']) >= 5 and set(result_data['sound_timeline'][0]) == {'start', 'cat', 'human'}
+    assert type(candidate['cat_score']) is float and type(candidate['human_score']) is float
     assert all(p.stat().st_mode & 0o777 == 0o600 for p in result.iterdir())
+
+
+def test_main_candidates_get_frames_before_weak_ones(module, tmp_path, monkeypatch):
+    monkeypatch.setitem(module['keep_near_frames'].__globals__, 'NEAR_LIMIT', 6)
+    for index in range(40):                       # 0〜9.75秒の0.25秒ごと
+        (tmp_path / f'near-{index:04d}.jpg').write_text('x')
+    weak = [{'start': 0.0, 'end': 1.0, 'frames': []}]
+    main = [{'start': 8.0, 'end': 8.25, 'frames': []}]
+    module['keep_near_frames'](tmp_path, main, weak)
+    assert len(main[0]['frames']) == 6 and weak[0]['frames'] == []
+    assert len(list(tmp_path.glob('near-*.jpg'))) == 6
+
+
+def test_source_hints_use_windows_centered_near_the_span(module):
+    timeline = [{'start': 0.0, 'cat': 0.0, 'human': 0.9}, {'start': 0.4875, 'cat': 0.6, 'human': 0.1},
+                {'start': 0.975, 'cat': 0.0, 'human': 0.0}]
+    [span] = module['source_hints']([{'start': 0.9, 'end': 1.1}], timeline)
+    assert (span['cat_score'], span['human_score']) == (0.6, 0.1)   # 0秒台の人の声の窓は拾わない
+    [none] = module['source_hints']([{'start': 5.0, 'end': 5.2}], timeline)
+    assert none['cat_score'] is None
