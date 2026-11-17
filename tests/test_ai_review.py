@@ -85,6 +85,7 @@ def test_codex_is_read_only_and_gets_images(module):
     command = runner.calls[0][0]
     assert command[:5] == ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check']
     assert sum(1 for part in command if part == '-i') == 3 and not any(part.endswith('.wav') for part in command)
+    assert command[-2] == '--' and 'あなたは音を聞けません' in command[-1]
 
 
 def test_declining_sends_nothing_and_failures_save_nothing(module):
