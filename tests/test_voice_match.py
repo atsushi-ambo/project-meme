@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app import acoustics
 from app.db import transaction
-from app.models import Observation, SoundAnalysis
+from app.models import Observation, SoundAnalysis, now
 from test_app import client, csrf, post
 from test_voices import api, call_type_id, saved, tone
 
@@ -107,6 +107,31 @@ def test_samples_are_not_suggested_and_old_measurements_can_be_upgraded(client, 
     assert '声のかたちを測って似ている声を探す' in client.get(f'/entries/observation/{oid}').text
     assert post(client, f'/observations/{oid}/sound-result/{target_id}/measure', {}).status_code == 303
     assert client.get(f'/api/analysis/voices/{target_id}/similar').json()['measured'] is True
+
+
+def test_deleting_observations_leave_similarity_hints_and_groups(client, videos):
+    deleting_oid, deleting_id = segment(client, videos['rise'], '短い「ニャッ」', 'preset:food', 'supports')
+    _, remaining_id = segment(client, videos['rise2'])
+    _, target_id = segment(client, videos['rise2'])
+    url = f'/api/analysis/voices/{target_id}/similar'
+
+    before = client.get(url).json()
+    assert {row['id'] for row in before['neighbors']} == {deleting_id, remaining_id}
+    assert before['hints']['meanings'][0]['counts']['supports'] == 1
+    assert client.get('/api/analysis/voices/groups').json()['groups'][0]['size'] == 3
+
+    with transaction() as db:
+        db.get(Observation, deleting_oid).deletion_requested_at = now()
+
+    after = client.get(url).json()
+    assert [row['id'] for row in after['neighbors']] == [remaining_id]
+    assert after['hints'] == {'close_count': 1, 'call_types': [], 'meanings': []}
+    assert client.get(f'/api/analysis/voices/{deleting_id}/similar').status_code == 404
+    grouped = client.get('/api/analysis/voices/groups').json()
+    assert grouped['compared'] == 2
+    [group] = grouped['groups']
+    assert {row['id'] for row in group['members']} == {remaining_id, target_id}
+    assert group['hints'] == {'close_count': 2, 'call_types': [], 'meanings': []}
 
 
 def test_groups_collect_close_voices_and_label_only_unlabelled(client, videos):
