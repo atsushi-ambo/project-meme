@@ -145,7 +145,8 @@ def codex_command(prompt, staged, images):
     command = ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', str(staged)]
     for image in images:
         command += ['-i', str(staged / image.name)]
-    return command + [prompt]
+    # -i は複数の値を取るため、'--' で区切らないと最後の指示文まで画像として読まれる。
+    return command + ['--', prompt]
 
 
 def build_command(tool, staged, files, runner=subprocess.run):
