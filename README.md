@@ -387,7 +387,15 @@ python3 scripts/voice.py ~/Library/Application\ Support/project-meme/drafts/voic
 python3 scripts/voice.py ~/Library/Application\ Support/project-meme/drafts/voice.json --submit
 ```
 
-新しい区間は`{"observation_id", "media_id", "start", "end", ...}`、既存の区間への書き足しは`{"observation_id", "sound_id", ...変更する項目だけ}`。分類の項目は`call_type_id`・`call_count`・`behaviors`・`meaning`（`preset:food`や`item:辞書ID`）・`assessment`・`owner_response`・`outcome`・`observation`・`hypothesis`・`unknown`です。
+新しい区間の下書きには`observation_id`・`media_id`・`start`・`end`と分類の項目を指定します。既存の区間へ書き足す場合は、先に現在の分類と版番号を確認します（`34`は区間ID、`12`は観察IDの例です）。
+
+```sh
+python3 scripts/voice.py --show 34 --observation 12
+```
+
+書き足しの下書きには`observation_id`・`sound_id`・`expected_revision`と変更する分類の項目だけを指定します。`expected_revision`には、確認した出力の`revision`を整数で入れます。更新時に409が返ったら、現在の分類を読み直して変更内容を見直します。
+
+分類の項目は`call_type_id`・`call_count`・`behaviors`・`meaning`（`preset:food`や`item:辞書ID`）・`assessment`・`owner_response`・`outcome`・`observation`・`hypothesis`・`unknown`です。
 
 測定はアプリのコンテナ内のFFmpegで、ローカルファイルだけを読み（ネットワークのプロトコルは不可）、20秒・出力量・スレッド数を制限して実行します。
 
